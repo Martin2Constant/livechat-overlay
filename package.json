@@ -8,9 +8,10 @@
     "build": "electron-builder --win --x64"
   },
   "build": {
+    "productName": "LivechatOverlay",
+    "artifactName": "LivechatOverlay.${ext}",
     "win": {
-      "target": "portable",
-      "icon": "icon.png"
+      "target": "portable"
     }
   },
   "keywords": [],

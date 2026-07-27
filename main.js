@@ -163,6 +163,23 @@ function createTray() {
     },
     { type: 'separator' },
     {
+      label: '🔊 Augmenter le son (+10%)',
+      click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.executeJavaScript('changeVolume(0.1)');
+        }
+      }
+    },
+    {
+      label: '🔉 Réduire le son (-10%)',
+      click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.executeJavaScript('changeVolume(-0.1)');
+        }
+      }
+    },
+    { type: 'separator' },
+    {
       label: 'Quitter',
       click: () => {
         app.quit();
