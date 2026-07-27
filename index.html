@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Overlay Livechat</title>
+    <style>
+        /* NOUVEAU : On crée une variable CSS pour le niveau de zoom */
+        :root {
+            --widget-scale: 0.7; /* 70% par défaut : Idéal pour 1080p */
+        }
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: transparent;
+        }
+
+        #widget-container {
+            position: absolute;
+            top: 10px;     
+            right: 10px;   
+            max-width: 800px; 
+            display: none; 
+            flex-direction: column;
+            align-items: flex-end; 
+            gap: 15px; 
+            /* NOUVEAU : Application du zoom dynamique */
+            transform: scale(var(--widget-scale));
+            transform-origin: top right; 
+        }
+
+        #author-container {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            background-color: rgba(0, 0, 0, 0.85);
+            padding: 10px 25px 10px 10px; 
+            border-radius: 50px; 
+            color: white;
+            font-family: 'Arial', sans-serif;
+            font-size: 24px; 
+            font-weight: bold;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.7);
+        }
+
+        #author-avatar {
+            width: 50px; 
+            height: 50px;
+            border-radius: 50%; 
+            border: 2px solid #ffcc00;
+            display: block;
+        }
+
+        #media-container img, #media-container video {
+            max-width: 800px; 
+            max-height: 600px; 
+            border-radius: 12px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.7); 
+            object-fit: contain;
+        }
+
+        #text-container {
+            text-align: right;
+            color: white;
+            font-family: 'Impact', 'Arial Black', sans-serif;
+            font-size: 45px; 
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            text-shadow: 3px 3px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+            max-width: 800px;
+            word-wrap: break-word; 
+        }
+    </style>
+</head>
+<body>
+
+    <div id="widget-container">
+        <div id="author-container">
+            <img id="author-avatar" src="" />
+            <span id="author-name"></span>
+        </div>
+        <div id="media-container"></div>
+        <div id="text-container"></div>
+    </div>
+
+    <script>
+    let ws = null;
+    
+    const widget = document.getElementById('widget-container');
+    const container = document.getElementById('media-container');
+    const textContainer = document.getElementById('text-container');
+    const authorAvatar = document.getElementById('author-avatar');
+    const authorName = document.getElementById('author-name');
+
+    let mediaTimeout = null;
+    let currentScale = 0.7; // Variable de la taille actuelle
+
+    function hideWidget() {
+        widget.style.display = 'none';
+        container.innerHTML = '';
+        textContainer.innerText = '';
+        authorAvatar.src = '';
+        authorAvatar.style.display = 'block'; 
+        authorName.innerText = '';
+        if (mediaTimeout) {
+            clearTimeout(mediaTimeout);
+            mediaTimeout = null;
+        }
+    }
+
+    function getMediaElement(url) {
+        const ytRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
+        const ytMatch = url.match(ytRegex);
+
+        if (ytMatch && ytMatch[1]) {
+            const videoId = ytMatch[1];
+            return `<webview src="https://www.youtube.com/embed/${videoId}?autoplay=1&controls=0&modestbranding=1" 
+                             httpreferrer="https://www.youtube.com/"
+                             style="width: 800px; height: 450px; border-radius: 12px; box-shadow: 0 8px 25px rgba(0,0,0,0.7);">
+                    </webview>`;
+        }
+
+        if (url.match(/\.(mp4|webm|ogg)(?:[?#]|$)/i)) {
+            return `<video src="${url}" autoplay style="max-width: 100%; border-radius: 12px; box-shadow: 0 8px 25px rgba(0,0,0,0.7);"></video>`;
+        }
+
+        return `<img src="${url}" />`;
+    }
+
+    // --- EXTRACTION DE VIDÉOS DEPUIS TWITTER/X, TIKTOK, INSTAGRAM ---
+
+    function extractTweetId(url) {
+        const m = url.match(/(?:twitter\.com|x\.com|fxtwitter\.com|vxtwitter\.com|fixupx\.com|fixvx\.com)\/[^\/]+\/status\/(\d+)/i);
+        return m ? m[1] : null;
+    }
+
+    async function resolveTwitterVideo(tweetId) {
+        // On essaie l'API vxtwitter, puis fxtwitter en secours
+        const endpoints = [
+            `https://api.vxtwitter.com/i/status/${tweetId}`,
+            `https://api.fxtwitter.com/status/${tweetId}`
+        ];
+        for (const endpoint of endpoints) {
+            try {
+                const res = await fetch(endpoint);
+                if (!res.ok) continue;
+                const json = await res.json();
+
+                // Format renvoyé par vxtwitter
+                if (json.media_extended && json.media_extended.length > 0) {
+                    const video = json.media_extended.find(m => m.type === 'video' || m.type === 'gif');
+                    if (video) return video.url;
+                }
+
+                // Format renvoyé par fxtwitter
+                if (json.tweet && json.tweet.media && json.tweet.media.videos && json.tweet.media.videos.length > 0) {
+                    return json.tweet.media.videos[0].url;
+                }
+            } catch (e) {
+                console.warn('Échec extraction Twitter via', endpoint, e);
+            }
+        }
+        return null;
+    }
+
+    async function resolveTikTokVideo(url) {
+        try {
+            const res = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`);
+            const json = await res.json();
+            if (json.data && json.data.play) {
+                return json.data.play;
+            }
+        } catch (e) {
+            console.warn('Échec extraction TikTok', e);
+        }
+        return null;
+    }
+
+    async function resolveInstagramVideo(url) {
+        // On convertit d'abord vers une URL instagram.com standard (au cas où le lien donné
+        // utilise kkinstagram, kkclip, etc.)
+        const igUrl = url.replace(
+            /(?:www\.)?(?:kkinstagram|kkclip|ddinstagram|instagramez|fxinstagram|uuinstagram)\.com/i,
+            'instagram.com'
+        ).replace('/reels/', '/reel/'); // l'endpoint embed/captioned attend "/reel/" au singulier
+        const cleanUrl = igUrl.split('?')[0].replace(/\/$/, '');
+        const embedUrl = `${cleanUrl}/embed/captioned/`;
+
+        // Instagram injecte la vidéo via JavaScript après le chargement de la page :
+        // impossible à récupérer avec un simple fetch(). On délègue donc au processus
+        // principal, qui ouvre une vraie fenêtre Chromium invisible pour la charger.
+        console.log(`[Instagram] Ouverture en arrière-plan de ${embedUrl}...`);
+        try {
+            const videoUrl = await window.electronAPI.resolveInstagramVideo(embedUrl);
+            if (videoUrl) {
+                console.log(`[Instagram] Vidéo trouvée : ${videoUrl}`);
+                return videoUrl;
+            }
+            console.error('[Instagram] Aucune vidéo trouvée après chargement complet de la page.');
+        } catch (e) {
+            console.error('[Instagram] Erreur lors de la résolution :', e.message || e);
+        }
+        return null;
+    }
+
+    async function buildMediaElement(url) {
+        let resolvedUrl = null;
+
+        if (/twitter\.com|x\.com|fxtwitter\.com|vxtwitter\.com|fixupx\.com|fixvx\.com/i.test(url)) {
+            const tweetId = extractTweetId(url);
+            if (tweetId) resolvedUrl = await resolveTwitterVideo(tweetId);
+        } else if (/tiktok\.com/i.test(url)) {
+            resolvedUrl = await resolveTikTokVideo(url);
+        } else if (/(?:instagram|kkinstagram|kkclip|ddinstagram|instagramez|fxinstagram|uuinstagram)\.com\/(reels?|p|tv)\//i.test(url)) {
+            resolvedUrl = await resolveInstagramVideo(url);
+        }
+
+        if (resolvedUrl) {
+            return `<video src="${resolvedUrl}" autoplay style="max-width: 100%; border-radius: 12px; box-shadow: 0 8px 25px rgba(0,0,0,0.7);"></video>`;
+        }
+
+        // Si l'extraction spécifique a échoué (ou l'URL n'est pas concernée),
+        // on retombe sur le comportement d'origine (image, mp4 direct, YouTube...)
+        return getMediaElement(url);
+    }
+
+    function showLaunchAnnouncement() {
+        hideWidget();
+        widget.style.display = 'flex';
+        authorName.innerText = '⚙️ SYSTÈME';
+        authorAvatar.style.display = 'none'; 
+        textContainer.innerText = 'OVERLAY LIVECHAT ACTIF !';
+        
+        mediaTimeout = setTimeout(() => {
+            hideWidget();
+        }, 5000);
+    }
+
+    // --- GESTION DE LA TAILLE ---
+    function changeSize(step) {
+        currentScale += step;
+        
+        // On limite la taille pour éviter que ça devienne invisible ou monstrueux
+        if (currentScale < 0.3) currentScale = 0.3;
+        if (currentScale > 1.5) currentScale = 1.5;
+        
+        // On applique le nouveau zoom au CSS
+        document.documentElement.style.setProperty('--widget-scale', currentScale);
+        
+        // Feedback visuel de la nouvelle taille
+        hideWidget();
+        widget.style.display = 'flex';
+        authorName.innerText = '⚙️ ZOOM';
+        authorAvatar.style.display = 'none';
+        textContainer.innerText = Math.round(currentScale * 100) + ' %';
+        
+        mediaTimeout = setTimeout(() => {
+            hideWidget();
+        }, 3000);
+    }
+
+    // --- GESTION DU POSITIONNEMENT ---
+    const positions = [
+        // NOUVEAU : Ajout de la variable "origin" pour que le zoom se fasse depuis le bon angle
+        { name: 'HAUT DROITE', top: '10px', right: '10px', bottom: 'auto', left: 'auto', align: 'flex-end', text: 'right', origin: 'top right' },
+        { name: 'BAS DROITE', top: 'auto', right: '10px', bottom: '10px', left: 'auto', align: 'flex-end', text: 'right', origin: 'bottom right' },
+        { name: 'BAS GAUCHE', top: 'auto', right: 'auto', bottom: '10px', left: '10px', align: 'flex-start', text: 'left', origin: 'bottom left' },
+        { name: 'HAUT GAUCHE', top: '10px', right: 'auto', bottom: 'auto', left: '10px', align: 'flex-start', text: 'left', origin: 'top left' }
+    ];
+    let currentPosIndex = 0; 
+
+    function cyclePosition() {
+        currentPosIndex = (currentPosIndex + 1) % positions.length;
+        const pos = positions[currentPosIndex];
+        
+        widget.style.top = pos.top;
+        widget.style.right = pos.right;
+        widget.style.bottom = pos.bottom;
+        widget.style.left = pos.left;
+        widget.style.alignItems = pos.align;
+        textContainer.style.textAlign = pos.text;
+        
+        // NOUVEAU : On met à jour l'origine du zoom
+        widget.style.transformOrigin = pos.origin;
+
+        hideWidget();
+        widget.style.display = 'flex';
+        authorName.innerText = '⚙️ SYSTÈME';
+        authorAvatar.style.display = 'none';
+        textContainer.innerText = 'POSITION : ' + pos.name;
+        
+        mediaTimeout = setTimeout(() => {
+            hideWidget();
+        }, 3000);
+    }
+
+    // --- CONNEXION WEBSOCKET ---
+    function connectWebSocket() {
+        ws = new WebSocket('wss://livechat-bot-0m01.onrender.com');
+
+        ws.onopen = () => {
+            console.log('Connecté au serveur Render !');
+            showLaunchAnnouncement();
+            
+            setInterval(() => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'ping' }));
+                }
+            }, 30000);
+        };
+
+        ws.onmessage = async (event) => {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'play_media') {
+                hideWidget(); 
+                widget.style.display = 'flex';
+                
+                if (data.url) {
+                    container.innerHTML = await buildMediaElement(data.url);
+                } else {
+                    container.innerHTML = ''; 
+                }
+                
+                textContainer.innerText = data.text ? data.text : '';
+
+                if (data.author) {
+                    authorName.innerText = data.author;
+                    authorAvatar.src = data.avatar;
+                }
+                
+                const videoElement = container.querySelector('video');
+
+                if (videoElement) {
+                    videoElement.onended = () => hideWidget();
+                    videoElement.onerror = () => {
+                        console.error(`[Média] Échec de lecture vidéo pour l'URL : ${videoElement.src}`);
+                        hideWidget();
+                    };
+                } else {
+                    mediaTimeout = setTimeout(() => hideWidget(), 10000);
+                }
+            }
+        };
+
+        ws.onclose = () => {
+            console.log('Connexion perdue. Reconnexion dans 5 secondes...');
+            setTimeout(connectWebSocket, 5000);
+        };
+
+        ws.onerror = (err) => {
+            console.error('Erreur WebSocket, fermeture forcée...');
+            ws.close(); 
+        };
+    }
+
+    connectWebSocket();
+    </script>
+</body>
+</html>
