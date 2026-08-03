@@ -83,25 +83,6 @@
         <div id="text-container"></div>
     </div>
 
-    <!-- Indicateur de volume : élément séparé du widget vidéo pour ne jamais
-         toucher (ni donc interrompre) la vidéo en cours de lecture -->
-    <div id="volume-indicator" style="
-        position: fixed;
-        bottom: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        background-color: rgba(0, 0, 0, 0.85);
-        color: white;
-        font-family: 'Arial', sans-serif;
-        font-size: 24px;
-        font-weight: bold;
-        padding: 10px 25px;
-        border-radius: 50px;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.7);
-        display: none;
-        z-index: 9999;
-    "></div>
-
     <script>
     let ws = null;
     
@@ -114,36 +95,10 @@
     let mediaTimeout = null;
     let currentScale = 0.7; // Variable de la taille actuelle
 
-    // --- GESTION DU VOLUME ---
-    let currentVolume = 1.0; // 100% par défaut
-    let volumeIndicatorTimeout = null;
-    const volumeIndicator = document.getElementById('volume-indicator');
-
-    function changeVolume(step) {
-        currentVolume += step;
-
-        if (currentVolume < 0) currentVolume = 0;
-        if (currentVolume > 1) currentVolume = 1;
-
-        // On applique le volume directement à la vidéo en cours de lecture,
-        // via la propriété .volume : ça change le son en direct SANS relancer
-        // ni interrompre la vidéo (contrairement à hideWidget() qui vide le
-        // conteneur média).
-        const videoElement = container.querySelector('video');
-        if (videoElement) {
-            videoElement.volume = currentVolume;
-        }
-
-        // Petit indicateur visuel indépendant du widget vidéo : n'affecte donc
-        // jamais la vidéo affichée.
-        volumeIndicator.innerText = (currentVolume === 0 ? '🔇 MUET' : '🔊 SON : ' + Math.round(currentVolume * 100) + ' %');
-        volumeIndicator.style.display = 'block';
-
-        if (volumeIndicatorTimeout) clearTimeout(volumeIndicatorTimeout);
-        volumeIndicatorTimeout = setTimeout(() => {
-            volumeIndicator.style.display = 'none';
-        }, 2000);
-    }
+    // Regex partagée pour repérer un lien YouTube, y compris les Shorts
+    // (youtube.com/shorts/ID), utilisée à la fois pour la résolution
+    // "sans pub" (buildMediaElement) et pour le fallback iframe (getMediaElement).
+    const ytRegex = /(?:youtube\.com\/(?:shorts\/|[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
 
     function hideWidget() {
         widget.style.display = 'none';
@@ -159,7 +114,6 @@
     }
 
     function getMediaElement(url) {
-        const ytRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
         const ytMatch = url.match(ytRegex);
 
         if (ytMatch && ytMatch[1]) {
@@ -263,6 +217,17 @@
             resolvedUrl = await resolveTikTokVideo(url);
         } else if (/(?:instagram|kkinstagram|kkclip|ddinstagram|instagramez|fxinstagram|uuinstagram)\.com\/(reels?|p|tv)\//i.test(url)) {
             resolvedUrl = await resolveInstagramVideo(url);
+        } else if (ytRegex.test(url)) {
+            // On récupère le flux mp4 brut (vidéo + audio) via ytdl-core côté
+            // processus principal : ça évite complètement le lecteur YouTube
+            // et donc ses pubs. Si ça échoue (lien non supporté, extraction
+            // cassée par un changement côté YouTube...), on retombe plus bas
+            // sur l'ancien comportement (iframe embed officielle).
+            try {
+                resolvedUrl = await window.electronAPI.resolveYoutubeVideo(url);
+            } catch (e) {
+                console.error('[YouTube] Erreur lors de la résolution :', e.message || e);
+            }
         }
 
         if (resolvedUrl) {
@@ -382,8 +347,6 @@
                 const videoElement = container.querySelector('video');
 
                 if (videoElement) {
-                    // Applique le volume actuellement réglé à toute nouvelle vidéo
-                    videoElement.volume = currentVolume;
                     videoElement.onended = () => hideWidget();
                     videoElement.onerror = () => {
                         console.error(`[Média] Échec de lecture vidéo pour l'URL : ${videoElement.src}`);
