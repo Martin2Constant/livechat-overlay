@@ -1,11 +1,39 @@
 const { app, BrowserWindow, session, screen, globalShortcut, Tray, Menu, nativeImage, ipcMain } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
-// On désactive le check de mise à jour de la lib (elle tente sinon de joindre
-// api.github.com à chaque appel, ce qui ralentit inutilement et échoue si le
-// réseau est restreint).
-process.env.YTDL_NO_UPDATE = '1';
-const ytdl = require('@distube/ytdl-core');
+// --- PERSISTANCE DES RÉGLAGES (volume, taille, position) ---
+// Stocké dans le dossier de données utilisateur de l'app (pas dans le dossier
+// du projet), pour survivre aux mises à jour et être au bon endroit une fois
+// l'app packagée.
+const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+
+function loadSettingsFromDisk() {
+  try {
+    const raw = fs.readFileSync(settingsPath, 'utf-8');
+    return JSON.parse(raw);
+  } catch (e) {
+    // Pas de fichier encore (premier lancement) ou fichier corrompu : le
+    // renderer utilisera ses valeurs par défaut.
+    return null;
+  }
+}
+
+function saveSettingsToDisk(settings) {
+  try {
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+  } catch (e) {
+    console.error('[Réglages] Impossible de sauvegarder les réglages :', e.message || e);
+  }
+}
+
+ipcMain.handle('load-settings', () => {
+  return loadSettingsFromDisk();
+});
+
+ipcMain.handle('save-settings', (event, settings) => {
+  saveSettingsToDisk(settings);
+});
 
 // Désactivation de l'accélération matérielle pour réparer les écrans noirs
 app.disableHardwareAcceleration();
@@ -134,54 +162,6 @@ ipcMain.handle('resolve-instagram-video', async (event, url) => {
   return await scrapeInstagramVideo(url);
 });
 
-// --- RÉSOLUTION DES VIDÉOS YOUTUBE (Y COMPRIS SHORTS), SANS PUB ---
-//
-// On ne passe volontairement pas par le lecteur officiel YouTube (webview /
-// iframe embed) : celui-ci peut toujours insérer des pubs pré-roll selon la
-// monétisation de la vidéo. En récupérant directement le flux mp4 brut via
-// ytdl-core, on lit juste le fichier média — il n'y a plus de lecteur YouTube
-// du tout, donc plus aucun système de pub.
-//
-// Limite connue : YouTube modifie régulièrement le chiffrement de ses flux,
-// ce qui peut casser ytdl-core de temps en temps (comme pour l'extraction
-// Instagram/TikTok). Il faudra alors mettre à jour la dépendance
-// "@distube/ytdl-core" (fork activement maintenu, contrairement à l'original
-// "ytdl-core").
-async function resolveYoutubeVideo(url) {
-  try {
-    if (!ytdl.validateURL(url)) {
-      console.warn(`[YouTube] URL non reconnue par ytdl-core : ${url}`);
-      return null;
-    }
-
-    const info = await ytdl.getInfo(url);
-
-    // Il faut un format qui contient à la fois la vidéo ET l'audio dans un
-    // seul flux : les formats adaptatifs haute qualité séparent vidéo et
-    // audio en deux flux distincts, ce qu'une simple balise <video> ne sait
-    // pas recombiner.
-    const format = ytdl.chooseFormat(info.formats, {
-      quality: 'highest',
-      filter: 'videoandaudio'
-    });
-
-    if (!format) {
-      console.error(`[YouTube] Aucun format vidéo+audio combiné trouvé pour : ${url}`);
-      return null;
-    }
-
-    console.log(`[YouTube] Résolu "${info.videoDetails.title}" -> itag ${format.itag} (${format.qualityLabel || 'qualité inconnue'})`);
-    return format.url;
-  } catch (e) {
-    console.error(`[YouTube] Échec de résolution pour ${url} :`, e.message || e);
-    return null;
-  }
-}
-
-ipcMain.handle('resolve-youtube-video', async (event, url) => {
-  return await resolveYoutubeVideo(url);
-});
-
 function createTray() {
   const iconPath = path.join(__dirname, 'icon.png');
   const icon = nativeImage.createFromPath(iconPath);
@@ -212,6 +192,23 @@ function createTray() {
       click: () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.executeJavaScript('changeSize(-0.1)');
+        }
+      }
+    },
+    { type: 'separator' },
+    {
+      label: 'Volume +10%',
+      click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.executeJavaScript('changeVolume(0.1)');
+        }
+      }
+    },
+    {
+      label: 'Volume -10%',
+      click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.executeJavaScript('changeVolume(-0.1)');
         }
       }
     },
@@ -249,7 +246,6 @@ function createWindow () {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      webviewTag: true,
       preload: path.join(__dirname, 'preload.js')
     }
   });
@@ -258,15 +254,6 @@ function createWindow () {
 
   mainWindow.setIgnoreMouseEvents(true);
   session.defaultSession.clearStorageData();
-
-  session.defaultSession.webRequest.onBeforeSendHeaders(
-    { urls: ['*://*.youtube.com/*', '*://*.youtube-nocookie.com/*'] },
-    (details, callback) => {
-      details.requestHeaders['Origin'] = 'https://www.youtube.com';
-      details.requestHeaders['Referer'] = 'https://www.youtube.com/';
-      callback({ requestHeaders: details.requestHeaders });
-    }
-  );
 
 mainWindow.loadFile('index.html');
 
@@ -313,6 +300,20 @@ app.whenReady().then(() => {
   globalShortcut.register('CommandOrControl+Alt+Down', () => {
     if (mainWindow) {
       mainWindow.webContents.executeJavaScript('changeSize(-0.1)'); // -10%
+    }
+  });
+
+  // NOUVEAU : Raccourci pour Volume + (Flèche Droite)
+  globalShortcut.register('CommandOrControl+Alt+Right', () => {
+    if (mainWindow) {
+      mainWindow.webContents.executeJavaScript('changeVolume(0.1)'); // +10%
+    }
+  });
+
+  // NOUVEAU : Raccourci pour Volume - (Flèche Gauche)
+  globalShortcut.register('CommandOrControl+Alt+Left', () => {
+    if (mainWindow) {
+      mainWindow.webContents.executeJavaScript('changeVolume(-0.1)'); // -10%
     }
   });
 });

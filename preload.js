@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 // rien d'autre de Node/Electron n'est accessible depuis le HTML (sécurité).
 contextBridge.exposeInMainWorld('electronAPI', {
     resolveInstagramVideo: (url) => ipcRenderer.invoke('resolve-instagram-video', url),
-    resolveYoutubeVideo: (url) => ipcRenderer.invoke('resolve-youtube-video', url)
+    loadSettings: () => ipcRenderer.invoke('load-settings'),
+    saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings)
 });
 

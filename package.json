@@ -16,9 +16,6 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
-  "dependencies": {
-    "@distube/ytdl-core": "^4.16.12"
-  },
   "devDependencies": {
     "electron": "^42.3.0",
     "electron-builder": "^24.13.3"

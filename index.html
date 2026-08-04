@@ -63,12 +63,73 @@
             text-align: right;
             color: white;
             font-family: 'Impact', 'Arial Black', sans-serif;
-            font-size: 45px; 
+            font-size: 45px;
             letter-spacing: 2px;
             text-transform: uppercase;
             text-shadow: 3px 3px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
             max-width: 800px;
-            word-wrap: break-word; 
+            word-wrap: break-word;
+        }
+
+        /* NOUVEAU : indicateur de volume (façon OSD Windows), indépendant du
+           widget média/texte pour ne jamais couper une vidéo en cours de lecture. */
+        #volume-indicator {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            align-items: center;
+            gap: 15px;
+            background-color: rgba(0, 0, 0, 0.85);
+            padding: 12px 25px;
+            border-radius: 50px;
+            color: white;
+            font-family: 'Arial', sans-serif;
+            font-size: 18px;
+            font-weight: bold;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.7);
+        }
+
+        #volume-bar {
+            display: flex;
+            gap: 4px;
+        }
+
+        /* NOUVEAU : composant de barre à segments réutilisable (volume, zoom...) */
+        .bar-segment {
+            width: 18px;
+            height: 22px;
+            border-radius: 3px;
+            background-color: rgba(255, 255, 255, 0.25);
+        }
+
+        .bar-segment.filled {
+            background-color: #ffcc00;
+        }
+
+        /* Barre de zoom : affichée dans #text-container, qui a par défaut une
+           police "Impact" toute en majuscules pour le texte de chat — on
+           réinitialise ces styles pour ce cas précis. */
+        .osd-bar-wrapper {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: flex-end; /* mis à jour dynamiquement selon la position (cf. applyPosition) */
+            gap: 8px;
+        }
+
+        .osd-bar-wrapper .osd-percent {
+            font-family: 'Arial', sans-serif;
+            font-size: 28px;
+            font-weight: bold;
+            text-transform: none;
+            letter-spacing: normal;
+            text-shadow: none;
+        }
+
+        .osd-bar-wrapper .bar-row {
+            display: flex;
+            gap: 4px;
         }
     </style>
 </head>
@@ -83,6 +144,11 @@
         <div id="text-container"></div>
     </div>
 
+    <div id="volume-indicator">
+        <span>🔊 VOLUME</span>
+        <div id="volume-bar"></div>
+    </div>
+
     <script>
     let ws = null;
     
@@ -91,14 +157,13 @@
     const textContainer = document.getElementById('text-container');
     const authorAvatar = document.getElementById('author-avatar');
     const authorName = document.getElementById('author-name');
+    const volumeIndicator = document.getElementById('volume-indicator');
+    const volumeBar = document.getElementById('volume-bar');
 
     let mediaTimeout = null;
     let currentScale = 0.7; // Variable de la taille actuelle
-
-    // Regex partagée pour repérer un lien YouTube, y compris les Shorts
-    // (youtube.com/shorts/ID), utilisée à la fois pour la résolution
-    // "sans pub" (buildMediaElement) et pour le fallback iframe (getMediaElement).
-    const ytRegex = /(?:youtube\.com\/(?:shorts\/|[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
+    let currentVolume = 1; // Volume actuel (0 à 1), 100% par défaut
+    let volumeIndicatorTimeout = null;
 
     function hideWidget() {
         widget.style.display = 'none';
@@ -114,16 +179,6 @@
     }
 
     function getMediaElement(url) {
-        const ytMatch = url.match(ytRegex);
-
-        if (ytMatch && ytMatch[1]) {
-            const videoId = ytMatch[1];
-            return `<webview src="https://www.youtube.com/embed/${videoId}?autoplay=1&controls=0&modestbranding=1" 
-                             httpreferrer="https://www.youtube.com/"
-                             style="width: 800px; height: 450px; border-radius: 12px; box-shadow: 0 8px 25px rgba(0,0,0,0.7);">
-                    </webview>`;
-        }
-
         if (url.match(/\.(mp4|webm|ogg)(?:[?#]|$)/i)) {
             return `<video src="${url}" autoplay style="max-width: 100%; border-radius: 12px; box-shadow: 0 8px 25px rgba(0,0,0,0.7);"></video>`;
         }
@@ -217,17 +272,6 @@
             resolvedUrl = await resolveTikTokVideo(url);
         } else if (/(?:instagram|kkinstagram|kkclip|ddinstagram|instagramez|fxinstagram|uuinstagram)\.com\/(reels?|p|tv)\//i.test(url)) {
             resolvedUrl = await resolveInstagramVideo(url);
-        } else if (ytRegex.test(url)) {
-            // On récupère le flux mp4 brut (vidéo + audio) via ytdl-core côté
-            // processus principal : ça évite complètement le lecteur YouTube
-            // et donc ses pubs. Si ça échoue (lien non supporté, extraction
-            // cassée par un changement côté YouTube...), on retombe plus bas
-            // sur l'ancien comportement (iframe embed officielle).
-            try {
-                resolvedUrl = await window.electronAPI.resolveYoutubeVideo(url);
-            } catch (e) {
-                console.error('[YouTube] Erreur lors de la résolution :', e.message || e);
-            }
         }
 
         if (resolvedUrl) {
@@ -235,8 +279,49 @@
         }
 
         // Si l'extraction spécifique a échoué (ou l'URL n'est pas concernée),
-        // on retombe sur le comportement d'origine (image, mp4 direct, YouTube...)
+        // on retombe sur le comportement d'origine (image, mp4 direct...)
         return getMediaElement(url);
+    }
+
+    // --- NORMALISATION DU VOLUME ENTRE LES VIDÉOS ---
+    // Selon leur source (Twitter, TikTok, Instagram...), les vidéos ont des
+    // niveaux sonores très différents. On fait passer le son de chaque vidéo
+    // par un compresseur dynamique (Web Audio API) qui écrase les pics trop
+    // forts : les vidéos déjà discrètes ne sont pas touchées, mais celles qui
+    // "envoient fort" sont ramenées à un niveau bien plus raisonnable. Le
+    // volume réglé via changeVolume() continue de s'appliquer normalement
+    // par-dessus (la propriété .volume de la vidéo agit avant le compresseur).
+    let audioContext = null;
+
+    function setupVolumeNormalization(videoElement) {
+        try {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+
+            const source = audioContext.createMediaElementSource(videoElement);
+            const compressor = audioContext.createDynamicsCompressor();
+
+            // À partir de -35 dB, le son commence à être compressé, avec un
+            // ratio de 16:1 (proche d'un limiteur) : les passages forts sont
+            // fortement écrasés sans que ça compresse en permanence.
+            compressor.threshold.setValueAtTime(-35, audioContext.currentTime);
+            compressor.knee.setValueAtTime(20, audioContext.currentTime);
+            compressor.ratio.setValueAtTime(16, audioContext.currentTime);
+            compressor.attack.setValueAtTime(0.003, audioContext.currentTime);
+            compressor.release.setValueAtTime(0.25, audioContext.currentTime);
+
+            source.connect(compressor);
+            compressor.connect(audioContext.destination);
+        } catch (e) {
+            // Si ça échoue (ex : navigateur/webview qui ne supporte pas la
+            // Web Audio API pour ce cas), la vidéo continue de jouer avec son
+            // volume d'origine, non normalisé.
+            console.warn('[Audio] Impossible de normaliser le volume :', e.message || e);
+        }
     }
 
     function showLaunchAnnouncement() {
@@ -251,27 +336,89 @@
         }, 5000);
     }
 
+    // --- COMPOSANT PARTAGÉ : barre à segments façon OSD (volume, zoom...) ---
+    // fillPercent : 0 à 100, correspond au pourcentage de segments allumés.
+    function buildBarSegmentsHtml(fillPercent) {
+        const totalSegments = 10;
+        const clamped = Math.max(0, Math.min(100, fillPercent));
+        const filledSegments = Math.round((clamped / 100) * totalSegments);
+
+        let html = '';
+        for (let i = 0; i < totalSegments; i++) {
+            html += `<div class="bar-segment${i < filledSegments ? ' filled' : ''}"></div>`;
+        }
+        return html;
+    }
+
     // --- GESTION DE LA TAILLE ---
+    const MIN_SCALE = 0.3;
+    const MAX_SCALE = 1.5;
+
     function changeSize(step) {
         currentScale += step;
-        
+
         // On limite la taille pour éviter que ça devienne invisible ou monstrueux
-        if (currentScale < 0.3) currentScale = 0.3;
-        if (currentScale > 1.5) currentScale = 1.5;
-        
+        if (currentScale < MIN_SCALE) currentScale = MIN_SCALE;
+        if (currentScale > MAX_SCALE) currentScale = MAX_SCALE;
+
         // On applique le nouveau zoom au CSS
         document.documentElement.style.setProperty('--widget-scale', currentScale);
-        
-        // Feedback visuel de la nouvelle taille
+
+        // Feedback visuel de la nouvelle taille : même barre à segments que le
+        // volume, plus le pourcentage exact au-dessus. La barre représente la
+        // position dans la plage [30%, 150%] (vide = taille min, pleine = taille max).
+        const percent = Math.round(currentScale * 100);
+        const fillPercent = ((currentScale - MIN_SCALE) / (MAX_SCALE - MIN_SCALE)) * 100;
+        const align = positions[currentPosIndex].align;
+
         hideWidget();
         widget.style.display = 'flex';
         authorName.innerText = '⚙️ ZOOM';
         authorAvatar.style.display = 'none';
-        textContainer.innerText = Math.round(currentScale * 100) + ' %';
-        
+        textContainer.innerHTML = `
+            <div class="osd-bar-wrapper" style="align-items: ${align};">
+                <div class="osd-percent">${percent} %</div>
+                <div class="bar-row">${buildBarSegmentsHtml(fillPercent)}</div>
+            </div>
+        `;
+
         mediaTimeout = setTimeout(() => {
             hideWidget();
         }, 3000);
+
+        saveSettings();
+    }
+
+    // --- GESTION DU VOLUME ---
+    // Contrairement au zoom/à la position, on ne passe pas par hideWidget() :
+    // on ne veut surtout pas couper la vidéo en cours de lecture juste pour
+    // afficher le feedback de volume. On utilise donc un indicateur séparé
+    // (façon barre de volume Windows/Mac), superposé par-dessus le média.
+    function changeVolume(step) {
+        currentVolume += step;
+
+        if (currentVolume < 0) currentVolume = 0;
+        if (currentVolume > 1) currentVolume = 1;
+
+        // On applique le nouveau volume à la vidéo en cours de lecture, s'il y en a une
+        const videoElement = container.querySelector('video');
+        if (videoElement) {
+            videoElement.volume = currentVolume;
+        }
+
+        const percent = Math.round(currentVolume * 100);
+        volumeBar.innerHTML = buildBarSegmentsHtml(percent);
+
+        volumeIndicator.style.display = 'flex';
+
+        if (volumeIndicatorTimeout) {
+            clearTimeout(volumeIndicatorTimeout);
+        }
+        volumeIndicatorTimeout = setTimeout(() => {
+            volumeIndicator.style.display = 'none';
+        }, 2000);
+
+        saveSettings();
     }
 
     // --- GESTION DU POSITIONNEMENT ---
@@ -282,31 +429,78 @@
         { name: 'BAS GAUCHE', top: 'auto', right: 'auto', bottom: '10px', left: '10px', align: 'flex-start', text: 'left', origin: 'bottom left' },
         { name: 'HAUT GAUCHE', top: '10px', right: 'auto', bottom: 'auto', left: '10px', align: 'flex-start', text: 'left', origin: 'top left' }
     ];
-    let currentPosIndex = 0; 
+    let currentPosIndex = 0;
 
-    function cyclePosition() {
-        currentPosIndex = (currentPosIndex + 1) % positions.length;
-        const pos = positions[currentPosIndex];
-        
+    // Applique une position donnée sans afficher de feedback ni toucher au
+    // média en cours — utilisé à la fois par cyclePosition() (qui ajoute le
+    // feedback visuel par-dessus) et par la restauration des réglages au
+    // démarrage (où on ne veut pas de popup "POSITION : ...").
+    function applyPosition(pos) {
         widget.style.top = pos.top;
         widget.style.right = pos.right;
         widget.style.bottom = pos.bottom;
         widget.style.left = pos.left;
         widget.style.alignItems = pos.align;
         textContainer.style.textAlign = pos.text;
-        
-        // NOUVEAU : On met à jour l'origine du zoom
         widget.style.transformOrigin = pos.origin;
+    }
+
+    function cyclePosition() {
+        currentPosIndex = (currentPosIndex + 1) % positions.length;
+        const pos = positions[currentPosIndex];
+
+        applyPosition(pos);
 
         hideWidget();
         widget.style.display = 'flex';
         authorName.innerText = '⚙️ SYSTÈME';
         authorAvatar.style.display = 'none';
         textContainer.innerText = 'POSITION : ' + pos.name;
-        
+
         mediaTimeout = setTimeout(() => {
             hideWidget();
         }, 3000);
+
+        saveSettings();
+    }
+
+    // --- PERSISTANCE DES RÉGLAGES (volume, taille, position) ---
+    // Sauvegardés côté processus principal (fichier JSON dans le dossier de
+    // données utilisateur), rechargés au démarrage. On "fire-and-forget" la
+    // sauvegarde : pas besoin d'attendre la confirmation d'écriture.
+    function saveSettings() {
+        if (window.electronAPI && window.electronAPI.saveSettings) {
+            window.electronAPI.saveSettings({
+                volume: currentVolume,
+                scale: currentScale,
+                positionIndex: currentPosIndex
+            }).catch(() => {});
+        }
+    }
+
+    async function restoreSavedSettings() {
+        try {
+            const saved = window.electronAPI ? await window.electronAPI.loadSettings() : null;
+            if (!saved) return;
+
+            if (typeof saved.volume === 'number') {
+                currentVolume = Math.max(0, Math.min(1, saved.volume));
+            }
+
+            if (typeof saved.scale === 'number') {
+                currentScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, saved.scale));
+                document.documentElement.style.setProperty('--widget-scale', currentScale);
+            }
+
+            if (typeof saved.positionIndex === 'number' && positions[saved.positionIndex]) {
+                currentPosIndex = saved.positionIndex;
+                applyPosition(positions[currentPosIndex]);
+            }
+
+            console.log('[Réglages] Réglages restaurés :', saved);
+        } catch (e) {
+            console.warn('[Réglages] Impossible de charger les réglages sauvegardés :', e.message || e);
+        }
     }
 
     // --- CONNEXION WEBSOCKET ---
@@ -347,9 +541,19 @@
                 const videoElement = container.querySelector('video');
 
                 if (videoElement) {
+                    videoElement.volume = currentVolume;
+                    setupVolumeNormalization(videoElement);
                     videoElement.onended = () => hideWidget();
                     videoElement.onerror = () => {
-                        console.error(`[Média] Échec de lecture vidéo pour l'URL : ${videoElement.src}`);
+                        // On log le code d'erreur HTML5 (1=ABORTED, 2=NETWORK,
+                        // 3=DECODE, 4=SRC_NOT_SUPPORTED) pour pouvoir diagnostiquer
+                        // précisément pourquoi la lecture échoue (ex : rejet 403
+                        // du CDN, format non supporté...).
+                        const err = videoElement.error;
+                        console.error(
+                            `[Média] Échec de lecture vidéo pour l'URL : ${videoElement.src} ` +
+                            `(code=${err ? err.code : '?'}, message="${err ? err.message : '?'}")`
+                        );
                         hideWidget();
                     };
                 } else {
@@ -369,7 +573,10 @@
         };
     }
 
-    connectWebSocket();
+    (async () => {
+        await restoreSavedSettings();
+        connectWebSocket();
+    })();
     </script>
 </body>
 </html>
