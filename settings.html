@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Configuration — Livechat Overlay</title>
+<style>
+:root { color-scheme: dark; font: 14px 'Segoe UI', sans-serif; color: #e9eef7; background: #10151f; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 24px; }
+header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+.eyebrow { color: #e9c760; letter-spacing: 2px; font-size: 11px; font-weight: 700; }
+h1 { font-size: 28px; letter-spacing: -.7px; margin: 5px 0 0; }
+h2 { margin: 0 0 8px; font-size: 16px; }
+p { color: #a3afc4; line-height: 1.6; margin: 0; }
+.badge { padding: 8px 12px; border: 1px solid #334338; border-radius: 20px; color: #a8d8b7; font-size: 12px; }
+main { display: grid; grid-template-columns: 1.1fr 1fr; gap: 20px; }
+.panel { background: #19212e; border: 1px solid #2b3546; border-radius: 16px; padding: 18px; }
+.field { margin: 16px 0; }
+.field:last-child { margin-bottom: 0; }
+.label { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; font-weight: 600; }
+output { color: #f4d46d; font-variant-numeric: tabular-nums; }
+input[type=range] { width: 100%; accent-color: #f4d46d; cursor: pointer; margin: 6px 0; }
+.bounds { display: flex; justify-content: space-between; color: #8e9bb0; font-size: 11px; }
+.positions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+button { font: inherit; color: #dbe3f0; border: 1px solid #3b485e; background: #222e40; border-radius: 9px; padding: 9px 12px; cursor: pointer; transition: background .15s; }
+select { width:100%; padding:9px; border:1px solid #3b485e; border-radius:8px; background:#222e40; color:#e9eef7; font:inherit; }
+button:hover { background: #30405a; }
+button:focus-visible, input:focus-visible { outline: 2px solid #f4d46d; outline-offset: 4px; }
+button[aria-pressed=true] { color: #f4d46d; border-color: #f4d46d; background: #353327; }
+button:disabled { cursor: wait; opacity: .5; }
+.primary { background: #f4d46d; border-color: #f4d46d; color: #191b23; font-weight: 700; }
+.primary:hover { background: #ffe393; }
+.monitor { position: relative; height: 150px; margin: 18px 0; border: 1px solid #45536b; border-radius: 10px; overflow: hidden; background: radial-gradient(ellipse at 20% 80%, #354660, #111a28); }
+.desktop { position: absolute; left: 16px; top: 16px; color: #8190a7; font-size: 10px; letter-spacing: 1px; }
+#sample { position: absolute; top: 12px; right: 12px; transform-origin: top right; max-width: 150px; }
+.sample-author { background: #0a0e16; border-radius: 20px; padding: 5px 10px; font-size: 10px; margin-bottom: 5px; }
+.sample-message { background: #efce69; color: #222330; border-radius: 6px; padding: 13px; font-size: 15px; font-weight: 800; }
+.actions { display: grid; gap: 9px; margin-top: 18px; }
+.hint { font-size: 12px; }
+.shortcuts { margin-top: 14px; padding: 14px 18px; display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.keys { display: grid; grid-template-columns: auto auto auto auto; gap: 7px 14px; font-size: 12px; color: #a3afc4; }
+kbd { font: 11px 'Segoe UI', sans-serif; color: #e1e7f1; }
+footer { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; gap: 16px; }
+#status { font-size: 12px; color: #a8d8b7; }
+#status.error { color: #ffaaa6; }
+.quiet { background: transparent; font-size: 12px; }
+@media(max-width: 760px) { body { padding: 22px; } .panel { padding: 18px; } main { gap: 14px; } .badge { display: none; } .keys { grid-template-columns:auto auto; } }
+</style>
+</head>
+<body>
+<header><div><div class="eyebrow">LIVECHAT OVERLAY</div><h1>À votre façon.</h1></div><span class="badge">Réglages appliqués en direct</span></header>
+<main>
+<section class="panel" aria-labelledby="display-title">
+<h2 id="display-title">Affichage & son</h2><p>Gardez le bon équilibre à l’écran.</p>
+<fieldset id="controls" disabled style="border:0;padding:0;margin:0;min-width:0">
+<div class="field"><label class="label" for="volume">Volume <output id="volume-value" for="volume">100 %</output></label><input id="volume" type="range" min="0" max="100" step="1" value="100"><div class="bounds"><span>Muet</span><span>100 %</span></div></div>
+<div class="field"><label class="label" for="scale">Taille de l’overlay <output id="scale-value" for="scale">70 %</output></label><input id="scale" type="range" min="30" max="150" step="1" value="70"><div class="bounds"><span>30 %</span><span>150 %</span></div></div>
+<div class="field"><div class="label" id="position-label">Position à l’écran</div><div class="positions" role="group" aria-labelledby="position-label">
+<button data-position="3" aria-pressed="false">↖ Haut gauche</button><button data-position="0" aria-pressed="true">↗ Haut droite</button>
+<button data-position="2" aria-pressed="false">↙ Bas gauche</button><button data-position="1" aria-pressed="false">↘ Bas droite</button>
+</div></div>
+<div class="field"><label for="youtube-format" class="label">Format YouTube</label><select id="youtube-format"><option value="auto">Automatique · Shorts en vertical</option><option value="portrait">Vertical · 9:16</option><option value="landscape">Horizontal · 16:9</option></select></div>
+</fieldset>
+</section>
+<section class="panel" aria-labelledby="preview-title">
+<h2 id="preview-title">Aperçu</h2><p>La position et la taille en un regard.</p>
+<div class="monitor" aria-hidden="true"><span class="desktop">VOTRE ÉCRAN</span><div id="sample"><div class="sample-author">● &nbsp; LIVECHAT</div><div class="sample-message">Salut tout le monde !</div></div></div>
+<p class="hint">L’aperçu ci-dessus est schématique. Affichez un message de test pour vérifier le résultat sur votre écran.</p>
+<div class="actions"><button id="preview" class="primary" disabled>Afficher un message de test</button><button id="stop" disabled>Arrêter le média en cours</button></div>
+<p class="hint" style="margin-top:12px">Le test remplace le média en cours et disparaît après 10 secondes.</p>
+</section>
+</main>
+<section class="panel shortcuts"><h2 style="margin:0">Toujours à portée de main</h2><div class="keys"><span>Configuration</span><kbd>Ctrl + Alt + O</kbd><span>Arrêter le média</span><kbd>Ctrl + Alt + X</kbd><span>Taille / volume</span><kbd>Ctrl + Alt + ↑ ↓ / ← →</kbd><span>Position</span><kbd>Ctrl + Alt + P</kbd></div></section>
+<footer><span id="status" role="status" aria-live="polite">Chargement des réglages…</span><button id="reset" class="quiet" disabled>Rétablir les valeurs par défaut</button></footer>
+<script src="settings.js"></script>
+</body>
+</html>

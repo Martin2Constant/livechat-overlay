@@ -14,10 +14,21 @@ Le contenu à afficher est envoyé en temps réel via un serveur WebSocket (bot 
 - Repositionnement à l'écran (4 coins) et zoom (de 30 % à 150 %) à la volée, sans redémarrer l'app.
 - Contrôle via l'icône dans la zone de notification (tray) ou via des raccourcis clavier globaux.
 
+## Configuration
+
+Double-cliquer sur l'icône de notification ou utiliser `Ctrl+Alt+O` pour ouvrir la fenêtre de configuration. Volume, taille et position s'appliquent immédiatement et sont sauvegardés pour le prochain lancement. Les raccourcis et la fenêtre restent synchronisés.
+
+Un aperçu schématique accompagne les réglages. Le bouton de test affiche un message pendant 10 secondes en remplaçant le média en cours. Le bouton de remise à zéro restaure le volume à 100 %, la taille à 70 %, la position en haut à droite et le format automatique.
+
+La petite croix fixe en haut à droite de l'écran quitte complètement l'application ; le reste de l'overlay laisse passer les clics. Fermer la fenêtre de configuration laisse l'overlay actif.
+
+Le format YouTube **Automatique** utilise un lecteur vertical 9:16 pour les liens `/shorts/` et horizontal 16:9 pour les autres liens. Pour une vidéo verticale partagée avec un lien `youtu.be` ou `watch`, choisir **Vertical**. Le changement redimensionne le lecteur en cours sans relancer la vidéo. Cela évite les bandes latérales dues au lecteur horizontal, mais ne supprime pas les bandes encodées dans la vidéo. À faible zoom, le lecteur conserve une surface minimale de 200 × 200 pixels.
+
 ## Raccourcis clavier
 
 | Raccourci | Action |
 |---|---|
+| `Ctrl+Alt+O` | Ouvrir la configuration |
 | `Ctrl+Alt+P` | Changer de position à l'écran (cycle entre les 4 coins) |
 | `Ctrl+Alt+↑` | Agrandir l'overlay (+10 %) |
 | `Ctrl+Alt+↓` | Réduire l'overlay (-10 %) |
@@ -25,7 +36,7 @@ Le contenu à afficher est envoyé en temps réel via un serveur WebSocket (bot 
 | `Ctrl+Alt+←` | Réduire le volume (-10 %) |
 | `Ctrl+Alt+X` | Arrêter et masquer le média en cours |
 
-Ces mêmes actions sont aussi disponibles depuis le menu de l'icône dans la zone de notification (clic droit), et un double-clic sur l'icône change directement de position.
+Ces mêmes actions sont aussi disponibles depuis le menu de l'icône dans la zone de notification (clic droit), et un double-clic sur l'icône ouvre la configuration.
 
 ## Prérequis
 
@@ -65,14 +76,17 @@ Le bot doit transmettre ce message sur la connexion WebSocket existante :
 
 Un lien YouTube dans `text` est aussi reconnu lorsque `url` est absent. Le code du bot n'est pas dans ce dépôt : si le bot filtre les liens YouTube avant de les transmettre, il faudra adapter ce filtre côté bot. Aucun téléchargement ni clé API YouTube n'est nécessaire. Le volume s'applique au lecteur et la fin de la vidéo masque l'overlay. Une nouvelle demande remplace la précédente. Pour un direct, utiliser le raccourci d'arrêt.
 
-L'application sert uniquement ses trois fichiers d'interface sur une adresse locale `127.0.0.1` avec un port attribué au lancement. Cela fournit au lecteur YouTube un contexte Web et l'en-tête `Referer` requis, absents avec un simple chargement `file://`. Voir les [exigences du lecteur intégré](https://developers.google.com/youtube/terms/required-minimum-functionality#embedded-player-api-client-identity) et l'[API officielle](https://developers.google.com/youtube/iframe_api_reference).
+L'application sert uniquement ses fichiers d'interface sur une adresse locale `127.0.0.1` avec un port attribué au lancement. Cela fournit au lecteur YouTube un contexte Web et l'en-tête `Referer` requis, absents avec un simple chargement `file://`. Voir les [exigences du lecteur intégré](https://developers.google.com/youtube/terms/required-minimum-functionality#embedded-player-api-client-identity) et l'[API officielle](https://developers.google.com/youtube/iframe_api_reference).
 
 ## Vérifications
 
 ```bash
 npm test
 npm run test:electron
+npm run test:settings
 ```
+
+Le test `test:settings` utilise un profil isolé, bloque le serveur de chat et vérifie les contrôles réels, la sauvegarde, la synchronisation, les formats, le test d’affichage, la remise à zéro et la fermeture complète par la croix. Il affiche brièvement la configuration pour capturer et vérifier sa mise en page.
 
 Les tests Node couvrent les URL, les messages invalides, les chargements concurrents, les événements périmés, le cycle de vie YouTube simulé et l'accès au serveur local. Le test Electron vérifie le DOM et le preload dans une fenêtre cachée ; il bloque la connexion au serveur de chat. Pour vérifier aussi une lecture YouTube réelle sous PowerShell :
 

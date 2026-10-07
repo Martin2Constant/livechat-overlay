@@ -7,6 +7,13 @@ let overlayServer;
 let overlayOrigin;
 let topmostInterval;
 let cancelInstagramScrape = null;
+let settingsWindow = null;
+let closeWindow = null;
+const DEFAULT_SETTINGS = { volume: 1, scale: 0.7, positionIndex: 0, youtubeFormat: 'auto' };
+
+function trustedSettingsSender(event) {
+  return settingsWindow && !settingsWindow.isDestroyed() && event.sender === settingsWindow.webContents && event.senderFrame === settingsWindow.webContents.mainFrame && event.senderFrame.url === overlayOrigin + '/settings';
+}
 
 function trustedSender(event) {
   return mainWindow && event.sender === mainWindow.webContents && event.senderFrame === mainWindow.webContents.mainFrame && event.senderFrame.url === overlayOrigin + '/';
@@ -17,6 +24,16 @@ function trustedSender(event) {
 // du projet), pour survivre aux mises à jour et être au bon endroit une fois
 // l'app packagée.
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+let currentSettings = sanitizeSettings(loadSettingsFromDisk());
+
+function sanitizeSettings(value) {
+  const settings = { ...DEFAULT_SETTINGS };
+  if (Number.isFinite(value?.volume)) settings.volume = Math.max(0, Math.min(1, value.volume));
+  if (Number.isFinite(value?.scale)) settings.scale = Math.max(0.3, Math.min(1.5, value.scale));
+  if (Number.isInteger(value?.positionIndex) && value.positionIndex >= 0 && value.positionIndex < 4) settings.positionIndex = value.positionIndex;
+  if (['auto', 'portrait', 'landscape'].includes(value?.youtubeFormat)) settings.youtubeFormat = value.youtubeFormat;
+  return settings;
+}
 
 function loadSettingsFromDisk() {
   try {
@@ -37,18 +54,97 @@ function saveSettingsToDisk(settings) {
     fs.renameSync(temporaryPath, settingsPath);
   } catch (e) {
     console.error('[Réglages] Impossible de sauvegarder les réglages :', e.message || e);
+    throw new Error('Impossible de sauvegarder les réglages sur le disque.');
   }
 }
 
-ipcMain.handle('load-settings', (event) => {
-  if (!trustedSender(event)) return null;
-  return loadSettingsFromDisk();
+function updateSettings(patch) {
+  const next = sanitizeSettings({ ...currentSettings, ...patch });
+  saveSettingsToDisk(next);
+  currentSettings = next;
+  for (const window of [mainWindow, settingsWindow]) {
+    if (window && !window.isDestroyed()) window.webContents.send('settings-changed', currentSettings);
+  }
+  return currentSettings;
+}
+
+ipcMain.handle('load-settings', event => {
+  if (!trustedSender(event) && !trustedSettingsSender(event)) throw new Error('Accès refusé');
+  return currentSettings;
+});
+ipcMain.handle('save-settings', (event, settings) => {
+  if (!trustedSender(event) && !trustedSettingsSender(event)) throw new Error('Accès refusé');
+  if (!settings || typeof settings !== 'object') throw new Error('Réglages invalides');
+  const patch = {};
+  for (const key of Object.keys(DEFAULT_SETTINGS)) {
+    if (Object.hasOwn(settings, key)) {
+      if (key === 'youtubeFormat') {
+        if (!['auto', 'portrait', 'landscape'].includes(settings[key])) throw new Error('Format invalide');
+        patch[key] = settings[key];
+        continue;
+      }
+      if (!Number.isFinite(settings[key]) || (key === 'positionIndex' && (!Number.isInteger(settings[key]) || settings[key] < 0 || settings[key] > 3))) throw new Error('Réglages invalides');
+      patch[key] = settings[key];
+    }
+  }
+  return updateSettings(patch);
+});
+ipcMain.handle('open-settings', event => {
+  if (trustedSender(event)) openSettings();
+});
+ipcMain.handle('quit-overlay', event => {
+  if (closeWindow && !closeWindow.isDestroyed() && event.sender === closeWindow.webContents && event.senderFrame === closeWindow.webContents.mainFrame && event.senderFrame.url === overlayOrigin + '/close') app.quit();
 });
 
-ipcMain.handle('save-settings', (event, settings) => {
-  if (!trustedSender(event) || !settings || !Number.isFinite(settings.volume) || !Number.isFinite(settings.scale) || !Number.isInteger(settings.positionIndex)) return;
-  saveSettingsToDisk({ volume: Math.max(0, Math.min(1, settings.volume)), scale: Math.max(0.3, Math.min(1.5, settings.scale)), positionIndex: Math.max(0, Math.min(3, settings.positionIndex)) });
+function positionCloseButton() {
+  if (!closeWindow || closeWindow.isDestroyed()) return;
+  const { x, y, width } = screen.getPrimaryDisplay().bounds;
+  closeWindow.setBounds({ x: x + width - 40, y: y + 8, width: 32, height: 32 });
+}
+
+function createCloseButton() {
+  closeWindow = new BrowserWindow({
+    width: 32, height: 32, transparent: true, frame: false, resizable: false,
+    skipTaskbar: true, alwaysOnTop: true, focusable: false, show: false,
+    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.js') }
+  });
+  positionCloseButton();
+  closeWindow.setAlwaysOnTop(true, 'screen-saver');
+  closeWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  closeWindow.webContents.on('will-navigate', event => event.preventDefault());
+  closeWindow.once('ready-to-show', () => closeWindow?.showInactive());
+  closeWindow.on('closed', () => { closeWindow = null; });
+  closeWindow.loadURL(overlayOrigin + '/close').catch(error => console.error('[Fermer]', error));
+}
+ipcMain.handle('settings-action', (event, action) => {
+  if (!trustedSettingsSender(event)) throw new Error('Accès refusé');
+  if (action === 'reset') return updateSettings(DEFAULT_SETTINGS);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (action === 'preview') return mainWindow.webContents.executeJavaScript('showConfigurationPreview()');
+    if (action === 'stop') return mainWindow.webContents.executeJavaScript('hideWidget()');
+  }
 });
+
+function openSettings() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    if (settingsWindow.isMinimized()) settingsWindow.restore();
+    settingsWindow.show();
+    settingsWindow.focus();
+    return;
+  }
+  settingsWindow = new BrowserWindow({
+    width: 900, height: 800, minWidth: 720, minHeight: 660,
+    title: 'Configuration — Livechat Overlay', backgroundColor: '#10151f',
+    autoHideMenuBar: true, show: false, icon: path.join(__dirname, 'icon.png'),
+    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.js') }
+  });
+  settingsWindow.setMenu(null);
+  settingsWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  settingsWindow.webContents.on('will-navigate', event => event.preventDefault());
+  settingsWindow.once('ready-to-show', () => settingsWindow?.show());
+  settingsWindow.on('closed', () => { settingsWindow = null; });
+  settingsWindow.loadURL(overlayOrigin + '/settings').catch(error => console.error('[Configuration]', error));
+}
 
 // Désactivation de l'accélération matérielle pour réparer les écrans noirs
 app.disableHardwareAcceleration();
@@ -196,7 +292,7 @@ function createTray() {
   tray.setToolTip('Livechat Overlay');
 
   const contextMenu = Menu.buildFromTemplate([
-    { label: 'Livechat Overlay', enabled: false },
+    { label: 'Configuration…', click: openSettings },
     { type: 'separator' },
     {
       label: 'Changer de position',
@@ -256,12 +352,7 @@ function createTray() {
 
   tray.setContextMenu(contextMenu);
 
-  // Double-clic sur l'icône = raccourci pratique pour changer de position
-  tray.on('double-click', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.executeJavaScript('cyclePosition()');
-    }
-  });
+  tray.on('double-click', openSettings);
 }
 
 function createWindow () {
@@ -313,8 +404,10 @@ else app.whenReady().then(async () => {
   overlayServer = local.server;
   overlayOrigin = local.origin;
   createWindow();
+  createCloseButton();
   screen.on('display-metrics-changed', () => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBounds(screen.getPrimaryDisplay().bounds);
+    positionCloseButton();
   });
   createTray();
 
@@ -322,6 +415,8 @@ else app.whenReady().then(async () => {
     openAtLogin: true,
     path: process.env.PORTABLE_EXECUTABLE_FILE || app.getPath('exe')
   });
+
+  globalShortcut.register('CommandOrControl+Alt+O', openSettings);
 
   // Raccourci pour changer de position (Déjà existant)
   globalShortcut.register('CommandOrControl+Alt+X', () => {

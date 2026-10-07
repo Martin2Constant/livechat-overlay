@@ -20,6 +20,14 @@
     let youtubePlayer = null;
     let youtubeApiPromise = null;
     let youtubeReady = false;
+    let currentYoutubeFormat = 'auto';
+    let youtubeIsShort = false;
+
+    function youtubeSize() {
+        const portrait = currentYoutubeFormat === 'portrait' || (currentYoutubeFormat === 'auto' && youtubeIsShort);
+        const height = portrait ? Math.max(600, 200 * 16 / 9 / currentScale) : Math.max(450, 200 / currentScale);
+        return { width: height * (portrait ? 9 / 16 : 16 / 9), height };
+    }
 
     function hideWidget() {
         generation++;
@@ -197,18 +205,20 @@
         const YT = await loadYouTubeApi();
         if (token !== generation) return;
         const mount = document.createElement('div');
+        youtubeIsShort = Boolean(info.portrait);
         container.appendChild(mount);
         const failed = message => mediaFailure(token, message);
         armTimeout(token, 25000, () => failed('YouTube : délai de lecture dépassé'));
         youtubePlayer = new YT.Player(mount, {
-            width: 800,
-            height: 450,
+            ...youtubeSize(),
             videoId: info.id,
             playerVars: { autoplay: 0, playsinline: 1, start: info.start, origin: location.origin },
             events: {
                 onReady: event => {
                     if (token !== generation) return;
                     youtubeReady = true;
+                    const size = youtubeSize();
+                    event.target.setSize?.(size.width, size.height);
                     event.target.setVolume(Math.round(currentVolume * 100));
                     event.target.playVideo();
                 },
@@ -355,7 +365,7 @@
     // --- GESTION DU POSITIONNEMENT ---
     const positions = [
         // NOUVEAU : Ajout de la variable "origin" pour que le zoom se fasse depuis le bon angle
-        { name: 'HAUT DROITE', top: '10px', right: '10px', bottom: 'auto', left: 'auto', align: 'flex-end', text: 'right', origin: 'top right' },
+        { name: 'HAUT DROITE', top: '48px', right: '10px', bottom: 'auto', left: 'auto', align: 'flex-end', text: 'right', origin: 'top right' },
         { name: 'BAS DROITE', top: 'auto', right: '10px', bottom: '10px', left: 'auto', align: 'flex-end', text: 'right', origin: 'bottom right' },
         { name: 'BAS GAUCHE', top: 'auto', right: 'auto', bottom: '10px', left: '10px', align: 'flex-start', text: 'left', origin: 'bottom left' },
         { name: 'HAUT GAUCHE', top: '10px', right: 'auto', bottom: 'auto', left: '10px', align: 'flex-start', text: 'left', origin: 'top left' }
@@ -400,30 +410,37 @@
         }
     }
 
-    async function restoreSavedSettings() {
-        try {
-            const saved = window.electronAPI ? await window.electronAPI.loadSettings() : null;
-            if (!saved) return;
-
-            if (Number.isFinite(saved.volume)) {
-                currentVolume = Math.max(0, Math.min(1, saved.volume));
-            }
-
-            if (Number.isFinite(saved.scale)) {
-                currentScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, saved.scale));
-                document.documentElement.style.setProperty('--widget-scale', currentScale);
-            }
-
-            if (Number.isInteger(saved.positionIndex) && positions[saved.positionIndex]) {
-                currentPosIndex = saved.positionIndex;
-                applyPosition(positions[currentPosIndex]);
-            }
-
-            console.log('[Réglages] Réglages restaurés :', saved);
-        } catch (e) {
-            console.warn('[Réglages] Impossible de charger les réglages sauvegardés :', e.message || e);
+    function applySettings(saved) {
+        if (!saved) return;
+        if (Number.isFinite(saved.volume)) currentVolume = Math.max(0, Math.min(1, saved.volume));
+        if (Number.isFinite(saved.scale)) currentScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, saved.scale));
+        if (Number.isInteger(saved.positionIndex) && positions[saved.positionIndex]) currentPosIndex = saved.positionIndex;
+        if (['auto', 'portrait', 'landscape'].includes(saved.youtubeFormat)) currentYoutubeFormat = saved.youtubeFormat;
+        document.documentElement.style.setProperty('--widget-scale', currentScale);
+        applyPosition(positions[currentPosIndex]);
+        const video = container.querySelector('video');
+        if (video) video.volume = currentVolume;
+        if (youtubeReady) youtubePlayer.setVolume(Math.round(currentVolume * 100));
+        if (youtubeReady) {
+            const size = youtubeSize();
+            youtubePlayer.setSize?.(size.width, size.height);
         }
     }
+
+    async function restoreSavedSettings() {
+        try { applySettings(await window.electronAPI?.loadSettings()); }
+        catch (error) { console.warn('[Réglages]', error); }
+    }
+
+    function showConfigurationPreview() {
+        hideWidget();
+        widget.style.display = 'flex';
+        authorName.innerText = 'APERÇU · LIVECHAT';
+        textContainer.innerText = 'Votre overlay apparaît ici !';
+        armTimeout(generation, 10000);
+    }
+
+    window.electronAPI?.onSettingsChanged?.(applySettings);
 
     // --- CONNEXION WEBSOCKET ---
     let hasShownLaunchAnnouncement = false;

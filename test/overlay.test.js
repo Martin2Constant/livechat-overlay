@@ -13,7 +13,7 @@ test('YouTube links, Shorts, embeds and timestamps', () => {
         'https://m.youtube.com/shorts/M7lc1UVf-VE?start=90',
         'https://youtube.com/live/M7lc1UVf-VE#t=90',
         'https://www.youtube-nocookie.com/embed/M7lc1UVf-VE?start=90'
-    ]) assert.deepEqual(MediaUtils.youtubeVideo(url), { id: 'M7lc1UVf-VE', start: 90 });
+    ]) assert.deepEqual(MediaUtils.youtubeVideo(url), { id: 'M7lc1UVf-VE', start: 90, ...(url.includes('/shorts/') ? { portrait: true } : {}) });
     for (const url of ['https://youtube.com.evil.test/watch?v=M7lc1UVf-VE', 'https://evil.test/youtube.com/watch?v=M7lc1UVf-VE', 'https://youtube.com/watch?v=invalid', null, {}]) {
         assert.equal(MediaUtils.youtubeVideo(url), null);
     }
@@ -141,6 +141,29 @@ test('Settings restoration ignores nonfinite and fractional values', async () =>
     assert.equal(r.run('currentVolume'), 1);
     assert.equal(r.run('currentScale'), 0.7);
     assert.equal(r.run('currentPosIndex'), 0);
+});
+
+test('Shorts use a portrait player; format changes keep the video running', async () => {
+    const r = renderer();
+    let options, player;
+    r.context.window.YT = {
+        PlayerState: { ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3 },
+        Player: class {
+            constructor(mount, config) { options = config; player = this; }
+            getIframe() { return r.context.document.createElement('iframe'); }
+            setVolume() {} playVideo() {} destroy() {}
+            setSize(width, height) { this.ratio = width / height; }
+        }
+    };
+    await r.send({ type: 'play_media', url: 'https://youtube.com/shorts/M7lc1UVf-VE' });
+    assert.equal(options.width / options.height, 9 / 16);
+    options.events.onReady({ target: player });
+    r.context.applySettings({ youtubeFormat: 'landscape' });
+    assert.equal(player.ratio, 16 / 9);
+    r.context.applySettings({ youtubeFormat: 'portrait', scale: .3 });
+    assert.equal(player.ratio, 9 / 16);
+    assert.equal(r.run('youtubeReady'), true);
+    assert.ok(r.run('youtubeSize().width * currentScale') >= 200);
 });
 
 test('Loopback server exposes only app assets with CSP and a Referer policy', async t => {

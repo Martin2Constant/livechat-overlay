@@ -7,6 +7,10 @@ const path = require('node:path');
 function startOverlayServer(directory) {
     const files = new Map([
         ['/', ['index.html', 'text/html; charset=utf-8']],
+        ['/settings', ['settings.html', 'text/html; charset=utf-8']],
+        ['/settings.js', ['settings.js', 'text/javascript; charset=utf-8']],
+        ['/close', ['close.html', 'text/html; charset=utf-8']],
+        ['/close.js', ['close.js', 'text/javascript; charset=utf-8']],
         ['/renderer.js', ['renderer.js', 'text/javascript; charset=utf-8']],
         ['/media-utils.js', ['media-utils.js', 'text/javascript; charset=utf-8']]
     ]);
