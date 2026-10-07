@@ -47,7 +47,21 @@ app.whenReady().then(async () => {
                     await new Promise(resolve => setTimeout(resolve, 700));
                     result.adjustedVolume = youtubePlayer.getVolume();
                     result.laterTime = youtubePlayer.getCurrentTime();
-                    hideWidget();
+                    result.captionUnloadSupported = typeof youtubePlayer.unloadModule === 'function';
+                    result.captionUnloads = 0;
+                    if (result.captionUnloadSupported) {
+                        const unload = youtubePlayer.unloadModule.bind(youtubePlayer);
+                        youtubePlayer.unloadModule = name => { result.captionUnloads++; unload(name); };
+                        youtubePlayer.loadModule('captions');
+                        await new Promise(resolve => setTimeout(resolve, 300));
+                        youtubePlayer.setOption('captions', 'track', { languageCode: 'en' });
+                        const captionDeadline = Date.now() + 5000;
+                        while (Date.now() < captionDeadline) {
+                            await new Promise(resolve => setTimeout(resolve, 200));
+                            if (result.captionUnloads > 0 && Object.keys(youtubePlayer.getOption('captions', 'track') || {}).length === 0) break;
+                        }
+                    }
+                    result.activeCaptionTrack = youtubePlayer.getOption('captions', 'track');
                     return result;
                 }
                 if (!youtubePlayer) return { state: 'failed', message: textContainer.innerText };
@@ -59,6 +73,14 @@ app.whenReady().then(async () => {
         assert.equal(youtube.state, 'playing');
         assert.equal(youtube.adjustedVolume, 80);
         assert.ok(youtube.laterTime > youtube.time);
+        assert.equal(youtube.captionUnloadSupported, true);
+        assert.ok(youtube.captionUnloads > 0);
+        const frame = window.webContents.mainFrame.framesInSubtree.find(frame => frame.url.includes('youtube.com/embed/'));
+        const captions = await frame.executeJavaScript(`({ pressed: document.querySelector('.ytp-subtitles-button')?.getAttribute('aria-pressed'), windows: document.querySelectorAll('.caption-window').length, track: document.querySelector('#movie_player')?.getOption?.('captions', 'track') })`);
+        console.log('Caption state:', JSON.stringify(captions));
+        assert.equal(captions.windows, 0);
+        assert.deepEqual(captions.track, {});
+        await window.webContents.executeJavaScript('hideWidget()');
     }
     console.log('Renderer error logs:', JSON.stringify(errors));
     window.destroy();

@@ -24,7 +24,7 @@
         const time = url.searchParams.get('start') || url.searchParams.get('t') || new URLSearchParams(url.hash.slice(1)).get('t') || '';
         const match = time.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
         const seconds = /^\d+$/.test(time) ? Number(time) : match ? Number(match[1] || 0) * 3600 + Number(match[2] || 0) * 60 + Number(match[3] || 0) : 0;
-        return { id, start: Number.isSafeInteger(seconds) ? seconds : 0 };
+        return { id, start: Number.isSafeInteger(seconds) ? seconds : 0, ...(/^\/shorts\//.test(url.pathname) ? { portrait: true } : {}) };
     }
 
     const api = { safeUrl, hostMatches, youtubeVideo };
