@@ -1,6 +1,16 @@
 const { app, BrowserWindow, session, screen, globalShortcut, Tray, Menu, nativeImage, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { startOverlayServer } = require('./overlay-server');
+const { safeUrl } = require('./media-utils');
+let overlayServer;
+let overlayOrigin;
+let topmostInterval;
+let cancelInstagramScrape = null;
+
+function trustedSender(event) {
+  return mainWindow && event.sender === mainWindow.webContents && event.senderFrame === mainWindow.webContents.mainFrame && event.senderFrame.url === overlayOrigin + '/';
+}
 
 // --- PERSISTANCE DES RÉGLAGES (volume, taille, position) ---
 // Stocké dans le dossier de données utilisateur de l'app (pas dans le dossier
@@ -21,18 +31,23 @@ function loadSettingsFromDisk() {
 
 function saveSettingsToDisk(settings) {
   try {
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    const temporaryPath = settingsPath + '.tmp';
+    fs.writeFileSync(temporaryPath, JSON.stringify(settings, null, 2), 'utf-8');
+    fs.renameSync(temporaryPath, settingsPath);
   } catch (e) {
     console.error('[Réglages] Impossible de sauvegarder les réglages :', e.message || e);
   }
 }
 
-ipcMain.handle('load-settings', () => {
+ipcMain.handle('load-settings', (event) => {
+  if (!trustedSender(event)) return null;
   return loadSettingsFromDisk();
 });
 
 ipcMain.handle('save-settings', (event, settings) => {
-  saveSettingsToDisk(settings);
+  if (!trustedSender(event) || !settings || !Number.isFinite(settings.volume) || !Number.isFinite(settings.scale) || !Number.isInteger(settings.positionIndex)) return;
+  saveSettingsToDisk({ volume: Math.max(0, Math.min(1, settings.volume)), scale: Math.max(0.3, Math.min(1.5, settings.scale)), positionIndex: Math.max(0, Math.min(3, settings.positionIndex)) });
 });
 
 // Désactivation de l'accélération matérielle pour réparer les écrans noirs
@@ -59,26 +74,33 @@ const FAKE_USER_AGENT =
   '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
 async function scrapeInstagramVideo(embedUrl) {
+  cancelInstagramScrape?.();
   return new Promise((resolve) => {
     const scraperWindow = new BrowserWindow({
       show: false,
       webPreferences: {
         nodeIntegration: false,
-        contextIsolation: true
+        contextIsolation: true,
+        sandbox: true,
+        partition: 'instagram-scraper'
       }
     });
 
+    scraperWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    scraperWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+
     // On renvoie les console.log/warn/error de la fenêtre de scraping vers ce
     // terminal : sans ça, impossible de savoir pourquoi l'extraction échoue.
-    scraperWindow.webContents.on('console-message', (event, level, message) => {
-      const levels = ['LOG', 'WARN', 'ERROR', 'DEBUG'];
-      console.log(`[Instagram Scraper - ${levels[level] || level}] ${message}`);
+    scraperWindow.webContents.on('console-message', ({ level, message }) => {
+      console.log(`[Instagram Scraper - ${level}] ${message}`);
     });
 
     let done = false;
     const finish = (result) => {
       if (done) return;
       done = true;
+      cancelInstagramScrape = null;
+      clearTimeout(timeout);
       resolve(result);
       if (!scraperWindow.isDestroyed()) {
         scraperWindow.destroy();
@@ -87,6 +109,7 @@ async function scrapeInstagramVideo(embedUrl) {
 
     // Sécurité : si jamais ça bloque, on abandonne après 20 secondes
     const timeout = setTimeout(() => finish(null), 20000);
+    cancelInstagramScrape = () => finish(null);
 
     scraperWindow.webContents.once('did-finish-load', async () => {
       try {
@@ -147,19 +170,23 @@ async function scrapeInstagramVideo(embedUrl) {
       }
     });
 
-    scraperWindow.webContents.once('did-fail-load', (event, errorCode, errorDescription) => {
+    scraperWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame) return;
       clearTimeout(timeout);
       console.error(`[Instagram] Échec du chargement de la page (${errorCode}: ${errorDescription})`);
       finish(null);
     });
 
     scraperWindow.webContents.setUserAgent(FAKE_USER_AGENT);
-    scraperWindow.loadURL(embedUrl, { userAgent: FAKE_USER_AGENT });
+    scraperWindow.loadURL(embedUrl, { userAgent: FAKE_USER_AGENT }).catch(() => finish(null));
   });
 }
 
 ipcMain.handle('resolve-instagram-video', async (event, url) => {
-  return await scrapeInstagramVideo(url);
+  if (!trustedSender(event)) return null;
+  const parsed = safeUrl(url);
+  if (!parsed || parsed.protocol !== 'https:' || !['instagram.com', 'www.instagram.com'].includes(parsed.hostname) || parsed.port || !/^\/(reel|p|tv)\/[\w-]+\/embed\/captioned\/$/.test(parsed.pathname)) return null;
+  return await scrapeInstagramVideo(parsed.href);
 });
 
 function createTray() {
@@ -214,6 +241,12 @@ function createTray() {
     },
     { type: 'separator' },
     {
+      label: 'Arrêter le média (Ctrl+Alt+X)',
+      click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.executeJavaScript('hideWidget()');
+      }
+    },
+    {
       label: 'Quitter',
       click: () => {
         app.quit();
@@ -232,13 +265,13 @@ function createTray() {
 }
 
 function createWindow () {
-  const { width, height } = screen.getPrimaryDisplay().bounds;
+  const { x, y, width, height } = screen.getPrimaryDisplay().bounds;
 
   mainWindow = new BrowserWindow({
     width: width,
     height: height,
-    x: 0,
-    y: 0,
+    x,
+    y,
     transparent: true,
     frame: false,
     alwaysOnTop: true,
@@ -246,6 +279,7 @@ function createWindow () {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       preload: path.join(__dirname, 'preload.js')
     }
   });
@@ -253,72 +287,86 @@ function createWindow () {
   mainWindow.setAlwaysOnTop(true, 'screen-saver');
 
   mainWindow.setIgnoreMouseEvents(true);
-  session.defaultSession.clearStorageData();
-
-mainWindow.loadFile('index.html');
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.webContents.on('will-navigate', event => event.preventDefault());
+  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  mainWindow.loadURL(overlayOrigin + '/').catch(error => { console.error(error); app.quit(); });
 
   // NOUVEAU : on renvoie les logs de la fenêtre (console.log/warn/error du HTML)
   // directement dans ce terminal, pour pouvoir diagnostiquer les soucis d'extraction
   // de vidéos (Twitter/TikTok/Instagram) sans avoir à ouvrir les DevTools.
-  mainWindow.webContents.on('console-message', (event, level, message) => {
-    const levels = ['LOG', 'WARN', 'ERROR', 'DEBUG'];
-    console.log(`[Overlay - ${levels[level] || level}] ${message}`);
+  mainWindow.webContents.on('console-message', ({ level, message }) => {
+    console.log(`[Overlay - ${level}] ${message}`);
   });
 
 
-  setInterval(() => {
+  topmostInterval = setInterval(() => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.setAlwaysOnTop(true, 'screen-saver');
     }
   }, 5000);
 }
 
-app.whenReady().then(() => {
+if (!app.requestSingleInstanceLock()) app.quit();
+else app.whenReady().then(async () => {
+  const local = await startOverlayServer(__dirname);
+  overlayServer = local.server;
+  overlayOrigin = local.origin;
   createWindow();
+  screen.on('display-metrics-changed', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBounds(screen.getPrimaryDisplay().bounds);
+  });
   createTray();
 
-  app.setLoginItemSettings({
+  if (app.isPackaged) app.setLoginItemSettings({
     openAtLogin: true,
-    path: app.getPath('exe')
+    path: process.env.PORTABLE_EXECUTABLE_FILE || app.getPath('exe')
   });
 
   // Raccourci pour changer de position (Déjà existant)
+  globalShortcut.register('CommandOrControl+Alt+X', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.executeJavaScript('hideWidget()');
+  });
+
   globalShortcut.register('CommandOrControl+Alt+P', () => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.executeJavaScript('cyclePosition()');
     }
   });
 
   // NOUVEAU : Raccourci pour Agrandir (Flèche Haut)
   globalShortcut.register('CommandOrControl+Alt+Up', () => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.executeJavaScript('changeSize(0.1)'); // +10%
     }
   });
 
   // NOUVEAU : Raccourci pour Réduire (Flèche Bas)
   globalShortcut.register('CommandOrControl+Alt+Down', () => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.executeJavaScript('changeSize(-0.1)'); // -10%
     }
   });
 
   // NOUVEAU : Raccourci pour Volume + (Flèche Droite)
   globalShortcut.register('CommandOrControl+Alt+Right', () => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.executeJavaScript('changeVolume(0.1)'); // +10%
     }
   });
 
   // NOUVEAU : Raccourci pour Volume - (Flèche Gauche)
   globalShortcut.register('CommandOrControl+Alt+Left', () => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.executeJavaScript('changeVolume(-0.1)'); // -10%
     }
   });
-});
+}).catch(error => { console.error('[Démarrage]', error); app.quit(); });
 
 app.on('before-quit', () => {
+  clearInterval(topmostInterval);
+  globalShortcut.unregisterAll();
+  overlayServer?.close();
   if (tray) {
     tray.destroy();
   }

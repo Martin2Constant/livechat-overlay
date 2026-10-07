@@ -1,16 +1,29 @@
 {
   "name": "livechat-overlay",
   "version": "1.0.0",
-  "description": "",
+  "description": "Overlay de chat pour afficher du texte, des images et des vidéos",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --win --x64"
+    "build": "electron-builder --win --x64",
+    "test": "node --test",
+    "test:electron": "electron scripts/electron-smoke.cjs"
   },
   "build": {
     "win": {
-      "target": "portable"
-    }
+      "target": "portable",
+      "signAndEditExecutable": false
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "renderer.js",
+      "media-utils.js",
+      "overlay-server.js",
+      "icon.png",
+      "package.json"
+    ]
   },
   "keywords": [],
   "author": "",
