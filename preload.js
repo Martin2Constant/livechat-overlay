@@ -7,7 +7,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     loadSettings: () => ipcRenderer.invoke('load-settings'),
     saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
     openSettings: () => ipcRenderer.invoke('open-settings'),
-    quitOverlay: () => ipcRenderer.invoke('quit-overlay'),
+    stopMedia: () => ipcRenderer.invoke('stop-media'),
+    setMediaActive: (active) => ipcRenderer.send('media-active', active),
+    setMediaControlBounds: (bounds) => ipcRenderer.send('media-control-bounds', bounds),
     settingsAction: (action) => ipcRenderer.invoke('settings-action', action),
     onSettingsChanged: (callback) => {
         const listener = (_event, settings) => callback(settings);

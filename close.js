@@ -1,3 +1,3 @@
-document.getElementById('quit').addEventListener('click', () => {
-    window.electronAPI.quitOverlay().catch(error => console.error('Impossible de quitter :', error));
+document.getElementById('stop').addEventListener('click', () => {
+    window.electronAPI.stopMedia().catch(error => console.error('Impossible d’arrêter le média :', error));
 });

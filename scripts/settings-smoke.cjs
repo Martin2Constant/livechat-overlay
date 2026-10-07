@@ -52,8 +52,27 @@ async function waitFor(callback) {
     config.close();
     await overlay.webContents.executeJavaScript('window.electronAPI.openSettings()');
     await waitFor(() => BrowserWindow.getAllWindows().some(window => window.webContents.getURL().endsWith('/settings') && !window.webContents.isLoading()));
-    console.log('Settings native checks passed: controls, persistence, shortcut sync, YouTube format, preview, stop, reset, layout, reopen. Testing quit button.');
     const close = BrowserWindow.getAllWindows().find(window => window.webContents.getURL().endsWith('/close'));
     assert.ok(close);
-    await close.webContents.executeJavaScript('document.getElementById("quit").click()').catch(() => {});
+    close.showInactive = () => BrowserWindow.prototype.showInactive.call(close);
+    assert.equal(close.isVisible(), false);
+    assert.equal(await overlay.webContents.executeJavaScript('widget.style.top'), '10px');
+    await overlay.webContents.executeJavaScript(`handleMessage({data: JSON.stringify({type:'play_media', text:'Test de fermeture', author:'Alice'})})`);
+    await waitFor(() => close.isVisible());
+    for (const positionIndex of [0, 1, 2, 3]) {
+        await overlay.webContents.executeJavaScript(`applySettings({positionIndex: ${positionIndex}, scale: 0.9})`);
+        const rect = await overlay.webContents.executeJavaScript('({right: authorContainer.getBoundingClientRect().right, top: authorContainer.getBoundingClientRect().top, height: authorContainer.getBoundingClientRect().height})');
+        const origin = overlay.getBounds();
+        await waitFor(() => Math.abs(close.getBounds().x - (origin.x + rect.right + 8)) <= 1 && Math.abs(close.getBounds().y + 16 - (origin.y + rect.top + rect.height / 2)) <= 1);
+    }
+    await close.webContents.executeJavaScript('document.getElementById("stop").click()');
+    await waitFor(() => !close.isVisible());
+    assert.equal(overlay.isDestroyed(), false);
+    assert.equal(await overlay.webContents.executeJavaScript('widget.style.display'), 'none');
+    await overlay.webContents.executeJavaScript(`handleMessage({data: JSON.stringify({type:'play_media', text:'Le prochain message fonctionne'})})`);
+    await waitFor(() => close.isVisible());
+    await overlay.webContents.executeJavaScript('hideWidget()');
+    await waitFor(() => !close.isVisible());
+    console.log('Settings native checks passed, including conditional stop button, next message and unchanged top-right position.');
+    app.quit();
 })().catch(error => { console.error(error); app.exit(1); });

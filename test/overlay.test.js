@@ -5,6 +5,21 @@ const fs = require('node:fs');
 const path = require('node:path');
 const MediaUtils = require('../media-utils');
 const { startOverlayServer } = require('../overlay-server');
+const { configureMediaRequests } = require('../media-network');
+
+test('Twitter media omit the loopback Referer without changing other headers or YouTube', () => {
+    let handler;
+    configureMediaRequests({ webRequest: { onBeforeSendHeaders(filter, callback) {
+        assert.deepEqual(filter.urls, ['https://video.twimg.com/*']);
+        handler = callback;
+    } } });
+    const headers = { Referer: 'http://127.0.0.1:1234/', Range: 'bytes=0-', 'User-Agent': 'Electron' };
+    handler({ resourceType: 'media', requestHeaders: headers }, result => {
+        assert.deepEqual(result.requestHeaders, { Range: 'bytes=0-', 'User-Agent': 'Electron' });
+    });
+    assert.ok(headers.Referer);
+    handler({ resourceType: 'xhr', requestHeaders: headers }, result => assert.deepEqual(result.requestHeaders, headers));
+});
 
 test('YouTube links, Shorts, embeds and timestamps', () => {
     for (const url of [
@@ -62,6 +77,22 @@ test('Malformed messages cannot crash the handler; text stays text', async () =>
     await r.send(null);
     await r.send({ type: 'play_media', text: '<img src=x onerror=alert(1)>' });
     assert.equal(r.elements.get('text-container').innerText, '<img src=x onerror=alert(1)>');
+});
+
+test('Stop button follows media activity and top-right keeps the original margin', async () => {
+    const r = renderer();
+    const activity = [];
+    r.context.window.electronAPI.setMediaActive = active => activity.push(active);
+    r.context.showLaunchAnnouncement();
+    assert.equal(activity.at(-1), false);
+    await r.send({ type: 'play_media', text: 'Message reçu' });
+    assert.equal(activity.at(-1), true);
+    r.context.applySettings({ positionIndex: 0 });
+    assert.equal(r.elements.get('widget-container').style.top, '10px');
+    r.context.hideWidget();
+    assert.equal(activity.at(-1), false);
+    r.context.showConfigurationPreview();
+    assert.equal(activity.at(-1), false);
 });
 
 test('Slow resolution and stale video events cannot replace a newer message', async () => {
