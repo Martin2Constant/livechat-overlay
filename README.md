@@ -20,7 +20,7 @@ Double-cliquer sur l'icône de notification ou utiliser `Ctrl+Alt+O` pour ouvrir
 
 Un aperçu schématique accompagne les réglages. Le bouton de test affiche un message pendant 10 secondes en remplaçant le média en cours. Le bouton de remise à zéro restaure le volume à 100 %, la taille à 70 %, la position en haut à droite et le format automatique.
 
-La petite croix fixe en haut à droite de l'écran quitte complètement l'application ; le reste de l'overlay laisse passer les clics. Fermer la fenêtre de configuration laisse l'overlay actif.
+La petite croix à droite du pseudo de l'émetteur apparaît uniquement lorsqu'un média ou un message reçu est en cours d'affichage, y compris pendant son chargement. Elle arrête ce contenu sans quitter l'application, puis disparaît. Le pseudo réserve un peu d'espace à sa droite ; la croix suit sa ligne lors des changements de position, de taille et de média, sans décaler l'overlay vers le bas. Le reste de l'overlay laisse passer les clics. Pour quitter l'application, utiliser « Quitter » dans le menu de notification.
 
 Le format YouTube **Automatique** utilise un lecteur vertical 9:16 pour les liens `/shorts/` et horizontal 16:9 pour les autres liens. Pour une vidéo verticale partagée avec un lien `youtu.be` ou `watch`, choisir **Vertical**. Le changement redimensionne le lecteur en cours sans relancer la vidéo. Cela évite les bandes latérales dues au lecteur horizontal, mais ne supprime pas les bandes encodées dans la vidéo. À faible zoom, le lecteur conserve une surface minimale de 200 × 200 pixels.
 
@@ -80,15 +80,20 @@ L'application sert uniquement ses fichiers d'interface sur une adresse locale `1
 
 Les sous-titres ajoutés par le lecteur YouTube sont désactivés automatiquement, y compris lorsqu'ils se chargent après le début de la lecture. Cette désactivation utilise une fonction exposée par le lecteur actuel mais non garantie par son API documentée ; si YouTube la retire, la vidéo continue de jouer. Les textes incrustés dans les images de la vidéo restent visibles.
 
+Les requêtes vidéo vers `video.twimg.com` omettent l’en-tête `Referer` local, que le serveur Twitter refuse avec une erreur 403. Cette règle est limitée aux vidéos Twitter et conserve le `Referer` nécessaire au lecteur YouTube.
+
 ## Vérifications
 
 ```bash
 npm test
 npm run test:electron
 npm run test:settings
+npm run test:twitter
 ```
 
-Le test `test:settings` utilise un profil isolé, bloque le serveur de chat et vérifie les contrôles réels, la sauvegarde, la synchronisation, les formats, le test d’affichage, la remise à zéro et la fermeture complète par la croix. Il affiche brièvement la configuration pour capturer et vérifier sa mise en page.
+Le test `test:settings` utilise un profil isolé, bloque le serveur de chat et vérifie les contrôles réels, la sauvegarde, la synchronisation, les formats, le test d’affichage, la remise à zéro et l’apparition conditionnelle de la croix et l’arrêt du média sans quitter l’application. Il affiche brièvement la configuration pour capturer et vérifier sa mise en page.
+
+Le test `test:twitter` vérifie une lecture réelle sur le lien public ayant déclenché la régression. La variable `TWITTER_URL` permet de tester un autre lien. Il dépend des services Twitter et bloque la connexion au bot.
 
 Les tests Node couvrent les URL, les messages invalides, les chargements concurrents, les événements périmés, le cycle de vie YouTube simulé et l'accès au serveur local. Le test Electron vérifie le DOM et le preload dans une fenêtre cachée ; il bloque la connexion au serveur de chat. Pour vérifier aussi une lecture YouTube réelle sous PowerShell :
 

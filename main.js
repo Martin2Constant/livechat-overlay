@@ -3,12 +3,16 @@ const path = require('path');
 const fs = require('fs');
 const { startOverlayServer } = require('./overlay-server');
 const { safeUrl } = require('./media-utils');
+const { configureMediaRequests } = require('./media-network');
 let overlayServer;
 let overlayOrigin;
 let topmostInterval;
 let cancelInstagramScrape = null;
 let settingsWindow = null;
 let closeWindow = null;
+let mediaActive = false;
+let closeButtonReady = false;
+let mediaControlBounds = null;
 const DEFAULT_SETTINGS = { volume: 1, scale: 0.7, positionIndex: 0, youtubeFormat: 'auto' };
 
 function trustedSettingsSender(event) {
@@ -92,14 +96,39 @@ ipcMain.handle('save-settings', (event, settings) => {
 ipcMain.handle('open-settings', event => {
   if (trustedSender(event)) openSettings();
 });
-ipcMain.handle('quit-overlay', event => {
-  if (closeWindow && !closeWindow.isDestroyed() && event.sender === closeWindow.webContents && event.senderFrame === closeWindow.webContents.mainFrame && event.senderFrame.url === overlayOrigin + '/close') app.quit();
+ipcMain.on('media-active', (event, active) => {
+  if (!trustedSender(event) || typeof active !== 'boolean') return;
+  mediaActive = active;
+  updateCloseButton();
 });
+ipcMain.on('media-control-bounds', (event, bounds) => {
+  if (!trustedSender(event) || !Number.isFinite(bounds?.x) || !Number.isFinite(bounds?.y)) return;
+  mediaControlBounds = bounds;
+  positionCloseButton();
+});
+ipcMain.handle('stop-media', event => {
+  if (closeWindow && !closeWindow.isDestroyed() && event.sender === closeWindow.webContents && event.senderFrame === closeWindow.webContents.mainFrame && event.senderFrame.url === overlayOrigin + '/close') {
+    mediaActive = false;
+    updateCloseButton();
+    if (mainWindow && !mainWindow.isDestroyed()) return mainWindow.webContents.executeJavaScript('hideWidget()');
+  }
+});
+
+function updateCloseButton() {
+  if (!closeButtonReady || !closeWindow || closeWindow.isDestroyed()) return;
+  if (mediaActive) closeWindow.showInactive();
+  else closeWindow.hide();
+}
 
 function positionCloseButton() {
   if (!closeWindow || closeWindow.isDestroyed()) return;
-  const { x, y, width } = screen.getPrimaryDisplay().bounds;
-  closeWindow.setBounds({ x: x + width - 40, y: y + 8, width: 32, height: 32 });
+  if (!mediaControlBounds || !mainWindow || mainWindow.isDestroyed()) return;
+  const { x, y, width, height } = mainWindow.getBounds();
+  closeWindow.setBounds({
+    x: x + Math.round(Math.max(0, Math.min(width - 32, mediaControlBounds.x))),
+    y: y + Math.round(Math.max(0, Math.min(height - 32, mediaControlBounds.y))),
+    width: 32, height: 32
+  });
 }
 
 function createCloseButton() {
@@ -112,8 +141,8 @@ function createCloseButton() {
   closeWindow.setAlwaysOnTop(true, 'screen-saver');
   closeWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   closeWindow.webContents.on('will-navigate', event => event.preventDefault());
-  closeWindow.once('ready-to-show', () => closeWindow?.showInactive());
-  closeWindow.on('closed', () => { closeWindow = null; });
+  closeWindow.webContents.once('did-finish-load', () => { closeButtonReady = true; updateCloseButton(); });
+  closeWindow.on('closed', () => { closeWindow = null; closeButtonReady = false; });
   closeWindow.loadURL(overlayOrigin + '/close').catch(error => console.error('[Fermer]', error));
 }
 ipcMain.handle('settings-action', (event, action) => {
@@ -380,6 +409,7 @@ function createWindow () {
   mainWindow.setIgnoreMouseEvents(true);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', event => event.preventDefault());
+  mainWindow.webContents.on('render-process-gone', () => { mediaActive = false; updateCloseButton(); });
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   mainWindow.loadURL(overlayOrigin + '/').catch(error => { console.error(error); app.quit(); });
 
@@ -403,6 +433,7 @@ else app.whenReady().then(async () => {
   const local = await startOverlayServer(__dirname);
   overlayServer = local.server;
   overlayOrigin = local.origin;
+  configureMediaRequests(session.defaultSession);
   createWindow();
   createCloseButton();
   screen.on('display-metrics-changed', () => {

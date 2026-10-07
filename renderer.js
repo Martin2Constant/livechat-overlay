@@ -6,6 +6,7 @@
     const textContainer = document.getElementById('text-container');
     const authorAvatar = document.getElementById('author-avatar');
     const authorName = document.getElementById('author-name');
+    const authorContainer = document.getElementById('author-container');
     const volumeIndicator = document.getElementById('volume-indicator');
     const volumeBar = document.getElementById('volume-bar');
 
@@ -23,6 +24,27 @@
     let captionsInterval = null;
     let currentYoutubeFormat = 'auto';
     let youtubeIsShort = false;
+    let mediaControlActive = false;
+
+    function updateMediaControlPosition() {
+        if (!mediaControlActive || !authorContainer.getBoundingClientRect) return;
+        const rect = authorContainer.getBoundingClientRect();
+        window.electronAPI?.setMediaControlBounds?.({ x: rect.right + 8, y: rect.top + rect.height / 2 - 16 });
+    }
+
+    function setMediaControlActive(active) {
+        mediaControlActive = active;
+        authorContainer.style.marginRight = active ? 'calc(40px / var(--widget-scale))' : '';
+        if (active) updateMediaControlPosition();
+        window.electronAPI?.setMediaActive?.(active);
+    }
+
+    if (typeof ResizeObserver !== 'undefined') {
+        const controlObserver = new ResizeObserver(updateMediaControlPosition);
+        controlObserver.observe(widget);
+        controlObserver.observe(authorContainer);
+    }
+    window.addEventListener?.('resize', updateMediaControlPosition);
 
     function youtubeSize() {
         const portrait = currentYoutubeFormat === 'portrait' || (currentYoutubeFormat === 'auto' && youtubeIsShort);
@@ -32,6 +54,7 @@
 
     function hideWidget() {
         generation++;
+        setMediaControlActive(false);
         clearInterval(captionsInterval);
         captionsInterval = null;
         resolutionController?.abort();
@@ -83,7 +106,7 @@
     }
 
     async function resolveTwitterVideo(tweetId, signal) {
-        // On essaie l'API vxtwitter, puis fxtwitter en secours
+        // On essaie l'API vxtwitter, puis fxtwitter en secours.
         const endpoints = [
             `https://api.vxtwitter.com/i/status/${tweetId}`,
             `https://api.fxtwitter.com/status/${tweetId}`
@@ -279,6 +302,7 @@
             authorAvatar.style.display = 'block';
             authorAvatar.onerror = () => { authorAvatar.style.display = 'none'; };
         }
+        setMediaControlActive(true);
         armTimeout(token, 30000, () => mediaFailure(token, 'Chargement du média impossible'));
         try {
             // Some bots forward plain text without populating the URL field.
@@ -352,6 +376,7 @@
 
         // On applique le nouveau zoom au CSS
         document.documentElement.style.setProperty('--widget-scale', currentScale);
+        updateMediaControlPosition();
 
         showOsd(`ZOOM ${Math.round(currentScale * 100)} %`, ((currentScale - MIN_SCALE) / (MAX_SCALE - MIN_SCALE)) * 100);
 
@@ -389,7 +414,7 @@
     // --- GESTION DU POSITIONNEMENT ---
     const positions = [
         // NOUVEAU : Ajout de la variable "origin" pour que le zoom se fasse depuis le bon angle
-        { name: 'HAUT DROITE', top: '48px', right: '10px', bottom: 'auto', left: 'auto', align: 'flex-end', text: 'right', origin: 'top right' },
+        { name: 'HAUT DROITE', top: '10px', right: '10px', bottom: 'auto', left: 'auto', align: 'flex-end', text: 'right', origin: 'top right' },
         { name: 'BAS DROITE', top: 'auto', right: '10px', bottom: '10px', left: 'auto', align: 'flex-end', text: 'right', origin: 'bottom right' },
         { name: 'BAS GAUCHE', top: 'auto', right: 'auto', bottom: '10px', left: '10px', align: 'flex-start', text: 'left', origin: 'bottom left' },
         { name: 'HAUT GAUCHE', top: '10px', right: 'auto', bottom: 'auto', left: '10px', align: 'flex-start', text: 'left', origin: 'top left' }
@@ -407,6 +432,7 @@
         widget.style.alignItems = pos.align;
         textContainer.style.textAlign = pos.text;
         widget.style.transformOrigin = pos.origin;
+        updateMediaControlPosition();
     }
 
     function cyclePosition() {

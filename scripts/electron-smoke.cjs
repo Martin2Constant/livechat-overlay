@@ -3,6 +3,7 @@ const { app, BrowserWindow, session, ipcMain } = require('electron');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { startOverlayServer } = require('../overlay-server');
+const { configureMediaRequests } = require('../media-network');
 app.setPath('userData', path.join(__dirname, '../node_modules/.smoke-profile'));
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -13,6 +14,7 @@ const deadline = setTimeout(() => { console.error('Smoke test timed out'); app.e
 app.whenReady().then(async () => {
     const local = await startOverlayServer(path.join(__dirname, '..'));
     server = local.server;
+    configureMediaRequests(session.defaultSession);
     session.defaultSession.webRequest.onBeforeRequest({ urls: ['wss://livechat-bot-0m01.onrender.com/*'] }, (_details, callback) => callback({ cancel: true }));
     const window = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, preload: path.join(__dirname, '../preload.js') } });
     const errors = [];
