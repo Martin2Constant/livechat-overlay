@@ -78,6 +78,8 @@ Un lien YouTube dans `text` est aussi reconnu lorsque `url` est absent. Le code 
 
 L'application sert uniquement ses fichiers d'interface sur une adresse locale `127.0.0.1` avec un port attribué au lancement. Cela fournit au lecteur YouTube un contexte Web et l'en-tête `Referer` requis, absents avec un simple chargement `file://`. Voir les [exigences du lecteur intégré](https://developers.google.com/youtube/terms/required-minimum-functionality#embedded-player-api-client-identity) et l'[API officielle](https://developers.google.com/youtube/iframe_api_reference).
 
+Les sous-titres ajoutés par le lecteur YouTube sont désactivés automatiquement, y compris lorsqu'ils se chargent après le début de la lecture. Cette désactivation utilise une fonction exposée par le lecteur actuel mais non garantie par son API documentée ; si YouTube la retire, la vidéo continue de jouer. Les textes incrustés dans les images de la vidéo restent visibles.
+
 ## Vérifications
 
 ```bash

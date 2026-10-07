@@ -20,6 +20,7 @@
     let youtubePlayer = null;
     let youtubeApiPromise = null;
     let youtubeReady = false;
+    let captionsInterval = null;
     let currentYoutubeFormat = 'auto';
     let youtubeIsShort = false;
 
@@ -31,6 +32,8 @@
 
     function hideWidget() {
         generation++;
+        clearInterval(captionsInterval);
+        captionsInterval = null;
         resolutionController?.abort();
         resolutionController = null;
         clearTimeout(mediaTimeout);
@@ -208,6 +211,18 @@
         youtubeIsShort = Boolean(info.portrait);
         container.appendChild(mount);
         const failed = message => mediaFailure(token, message);
+        // cc_load_policy=0 alone does not override a viewer's caption preferences.
+        // unloadModule is exposed by the current player, but is not a documented
+        // stable API: feature-detect it and preserve playback if YouTube changes it.
+        const disableCaptions = event => {
+            if (token !== generation) return;
+            try {
+                const player = event.target;
+                const track = player.getOption?.('captions', 'track');
+                if (track && Object.keys(track).length === 0) return;
+                if (player.getOptions?.()?.includes('captions')) player.unloadModule?.('captions');
+            } catch (error) { console.warn('[YouTube] Sous-titres non désactivés :', error); }
+        };
         armTimeout(token, 25000, () => failed('YouTube : délai de lecture dépassé'));
         youtubePlayer = new YT.Player(mount, {
             ...youtubeSize(),
@@ -217,6 +232,11 @@
                 onReady: event => {
                     if (token !== generation) return;
                     youtubeReady = true;
+                    disableCaptions(event);
+                    // Module metadata can arrive after onApiChange. Check again
+                    // while this player is active, including after delayed loads.
+                    clearInterval(captionsInterval);
+                    captionsInterval = setInterval(() => disableCaptions(event), 500);
                     const size = youtubeSize();
                     event.target.setSize?.(size.width, size.height);
                     event.target.setVolume(Math.round(currentVolume * 100));
@@ -225,11 +245,15 @@
                 onStateChange: event => {
                     if (token !== generation) return;
                     if (event.data === YT.PlayerState.ENDED) hideWidget();
-                    else if (event.data === YT.PlayerState.PLAYING) clearTimeout(mediaTimeout);
+                    else if (event.data === YT.PlayerState.PLAYING) {
+                        clearTimeout(mediaTimeout);
+                        disableCaptions(event);
+                    }
                     else if ([YT.PlayerState.BUFFERING, YT.PlayerState.PAUSED].includes(event.data)) {
                         armTimeout(token, 30000, () => failed('YouTube : lecture interrompue'));
                     }
                 },
+                onApiChange: disableCaptions,
                 onError: event => failed(`YouTube : vidéo indisponible ou intégration refusée (code ${event.data})`),
                 onAutoplayBlocked: () => failed('YouTube : lecture automatique bloquée')
             }

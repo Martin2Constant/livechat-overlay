@@ -99,7 +99,9 @@ test('YouTube lifecycle: timestamp, volume, errors, cleanup and text links', asy
     r.context.window.YT = {
         PlayerState: { ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3 },
         Player: class {
-            constructor(mount, config) { options = config; player = this; this.iframe = r.context.document.createElement('iframe'); }
+            constructor(mount, config) { options = config; player = this; this.iframe = r.context.document.createElement('iframe'); this.modules = ['captions']; this.unloads = 0; }
+            getOptions() { return this.modules; }
+            unloadModule(name) { assert.equal(name, 'captions'); this.modules = []; this.unloads++; }
             getIframe() { return this.iframe; }
             setVolume(value) { this.volume = value; }
             playVideo() { this.played = true; }
@@ -110,12 +112,21 @@ test('YouTube lifecycle: timestamp, volume, errors, cleanup and text links', asy
     assert.equal(options.playerVars.start, 42);
     options.events.onReady({ target: player });
     assert.equal(player.played, true);
+    assert.equal(player.unloads, 1);
+    options.events.onApiChange({ target: player });
+    assert.equal(player.unloads, 1); // No unload loop when the module is already gone.
+    player.modules = ['captions'];
+    options.events.onApiChange({ target: player });
+    assert.equal(player.unloads, 2);
     r.context.changeVolume(-0.1);
     assert.equal(player.volume, 90);
     options.events.onError({ data: 101 });
     assert.equal(player.destroyed, true);
     assert.match(r.elements.get('text-container').innerText, /101/);
     await r.send({ type: 'play_media', text: 'new' });
+    player.modules = ['captions'];
+    options.events.onApiChange({ target: player });
+    assert.equal(player.unloads, 2); // Ignore late events from a replaced player.
     options.events.onStateChange({ data: 0 });
     assert.equal(r.elements.get('text-container').innerText, 'new');
 });
