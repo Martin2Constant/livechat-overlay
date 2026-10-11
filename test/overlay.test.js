@@ -124,6 +124,17 @@ test('URLs containing quotes are assigned as attributes, never HTML', async () =
     assert.equal(r.elements.get('media-container').children.length, 0);
 });
 
+test('Discord GIF attachments preserve signed URLs and stop normally', async () => {
+    const r = renderer();
+    const url = 'https://cdn.discordapp.com/attachments/123/456/animation.gif?ex=abcdef&is=123456&hm=signature';
+    await r.send({ type: 'play_media', url, author: 'Discord' });
+    const gif = r.elements.get('media-container').children[0];
+    assert.equal(gif.tagName, 'IMG');
+    assert.equal(gif.src, url);
+    r.context.hideWidget();
+    assert.equal(r.elements.get('media-container').children.length, 0);
+});
+
 test('YouTube lifecycle: timestamp, volume, errors, cleanup and text links', async () => {
     const r = renderer();
     let options, player;

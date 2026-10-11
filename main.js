@@ -173,7 +173,12 @@ ipcMain.handle('stop-media', event => {
 
 function updateCloseButton() {
   if (!closeButtonReady || !closeWindow || closeWindow.isDestroyed()) return;
-  if (mediaActive) closeWindow.showInactive();
+  if (mediaActive) {
+    positionCloseButton();
+    closeWindow.setAlwaysOnTop(true, 'screen-saver');
+    if (!closeWindow.isVisible()) closeWindow.showInactive();
+    closeWindow.moveTop();
+  }
   else closeWindow.hide();
 }
 
@@ -190,6 +195,7 @@ function positionCloseButton() {
 
 function createCloseButton() {
   closeWindow = new BrowserWindow({
+    parent: mainWindow,
     width: 32, height: 32, transparent: true, frame: false, resizable: false,
     skipTaskbar: true, alwaysOnTop: true, focusable: false, show: false,
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.js') }
@@ -481,6 +487,8 @@ function createWindow () {
   topmostInterval = setInterval(() => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      // Raise the clickable control after its transparent parent, without focus.
+      updateCloseButton();
     }
   }, 5000);
 }

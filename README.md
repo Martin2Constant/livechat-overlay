@@ -80,6 +80,12 @@ Au lancement, l'overlay reste transparent tant qu'aucun message n'arrive. Son ic
 
 Le build est non signé et désactive l'édition des ressources de l'exécutable (`signAndEditExecutable: false`) pour éviter le besoin de liens symboliques/privilèges supplémentaires avec l'outil de packaging. L'exécutable conserve donc les ressources Electron par défaut ; l'icône de notification utilise `icon.png`. Seuls les fichiers nécessaires à l'application sont inclus ; les anciens fichiers `*-player-script.js` ne sont ni exécutés ni distribués.
 
+## Envoyer un GIF depuis Discord
+
+Le bot peut transmettre le lien direct d'une pièce jointe `.gif` dans le champ `url` d'un message `play_media`. Le GIF est animé dans l'overlay, affiché pendant 10 secondes après chargement, et peut être arrêté avec la croix. Il faut conserver l'URL complète, y compris ses paramètres de signature : les liens de pièces jointes Discord peuvent expirer. Le bot doit utiliser le lien actuel fourni par Discord.
+
+Un lien de message `discord.com/channels/...` ou de page `tenor.com/view/...` n'est pas une URL de fichier GIF et n'est pas résolu par cette version. Le bot doit transmettre le média direct correspondant. Le bot Discord n'est pas inclus dans ce dépôt ; son extraction des pièces jointes reste à vérifier séparément.
+
 ## Envoyer une vidéo YouTube
 
 Le bot doit transmettre ce message sur la connexion WebSocket existante :
