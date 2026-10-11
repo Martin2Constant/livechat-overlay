@@ -84,7 +84,9 @@ Le build est non signé et désactive l'édition des ressources de l'exécutable
 
 Le bot peut transmettre le lien direct d'une pièce jointe `.gif` dans le champ `url` d'un message `play_media`. Le GIF est animé dans l'overlay, affiché pendant 10 secondes après chargement, et peut être arrêté avec la croix. Il faut conserver l'URL complète, y compris ses paramètres de signature : les liens de pièces jointes Discord peuvent expirer. Le bot doit utiliser le lien actuel fourni par Discord.
 
-Un lien de message `discord.com/channels/...` ou de page `tenor.com/view/...` n'est pas une URL de fichier GIF et n'est pas résolu par cette version. Le bot doit transmettre le média direct correspondant. Le bot Discord n'est pas inclus dans ce dépôt ; son extraction des pièces jointes reste à vérifier séparément.
+Les pages Tenor `https://tenor.com/view/...` et leurs variantes localisées comme `/fr/view/...` sont résolues automatiquement vers le GIF. Par exemple : `!livechat https://tenor.com/fr/view/the-rock-stare-thinking-gif-5680807550909397990`. Le bot doit transmettre un message `play_media` contenant le lien dans `url` ou dans `text`. Le chargement de la page est limité à 10 secondes et annulé à l'arrêt ou au remplacement du média.
+
+Un lien de message `discord.com/channels/...` n'est pas résolu. Le bot Discord n'est pas inclus dans ce dépôt : son acceptation de la commande et la transmission du lien restent à vérifier séparément. La résolution Tenor dépend des métadonnées publiques de ses pages et peut nécessiter une adaptation si elles changent.
 
 ## Envoyer une vidéo YouTube
 
