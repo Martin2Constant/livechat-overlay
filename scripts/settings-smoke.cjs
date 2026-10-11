@@ -66,6 +66,10 @@ async function waitFor(callback) {
     await waitFor(() => BrowserWindow.getAllWindows().some(window => window.webContents.getURL().endsWith('/settings') && !window.webContents.isLoading()));
     const close = BrowserWindow.getAllWindows().find(window => window.webContents.getURL().endsWith('/close'));
     assert.ok(close);
+    assert.equal(close.getParentWindow(), overlay);
+    let closeRaises = 0;
+    const moveCloseTop = close.moveTop.bind(close);
+    close.moveTop = () => { closeRaises++; moveCloseTop(); };
     close.showInactive = () => BrowserWindow.prototype.showInactive.call(close);
     assert.equal(close.isVisible(), false);
     assert.equal(await overlay.webContents.executeJavaScript('widget.style.top'), '10px');
@@ -74,6 +78,10 @@ async function waitFor(callback) {
     const reopened = BrowserWindow.getAllWindows().find(window => window.webContents.getURL().endsWith('/settings'));
     assert.equal(await reopened.webContents.executeJavaScript('openAtLogin.checked'), false);
     assert.equal((await reopened.webContents.executeJavaScript('window.electronAPI.clearCache()')).pending, true);
+    const previousRaises = closeRaises;
+    // Simulate a hidden/covered control and wait for the periodic restoration.
+    close.hide();
+    await waitFor(() => close.isVisible() && closeRaises > previousRaises);
     for (const positionIndex of [0, 1, 2, 3]) {
         await overlay.webContents.executeJavaScript(`applySettings({positionIndex: ${positionIndex}, scale: 0.9})`);
         const rect = await overlay.webContents.executeJavaScript('({right: authorContainer.getBoundingClientRect().right, top: authorContainer.getBoundingClientRect().top, height: authorContainer.getBoundingClientRect().height})');
@@ -83,6 +91,10 @@ async function waitFor(callback) {
     await close.webContents.executeJavaScript('document.getElementById("stop").click()');
     await waitFor(() => !close.isVisible());
     await waitFor(() => reopened.webContents.executeJavaScript('window.electronAPI.cacheStatus().then(s => !s.pending && !s.running)'));
+    const idleRaises = closeRaises;
+    await sleep(5200);
+    assert.equal(close.isVisible(), false);
+    assert.equal(closeRaises, idleRaises);
     assert.equal(overlay.isDestroyed(), false);
     assert.equal(await overlay.webContents.executeJavaScript('widget.style.display'), 'none');
     await overlay.webContents.executeJavaScript(`handleMessage({data: JSON.stringify({type:'play_media', text:'Le prochain message fonctionne'})})`);
@@ -90,5 +102,14 @@ async function waitFor(callback) {
     await overlay.webContents.executeJavaScript('hideWidget()');
     await waitFor(() => !close.isVisible());
     console.log('Settings native checks passed, including conditional stop button, next message and unchanged top-right position.');
+    if (process.env.TENOR_URL) {
+        await overlay.webContents.executeJavaScript(`handleMessage({data:JSON.stringify({type:'play_media', text:${JSON.stringify('!livechat ' + process.env.TENOR_URL)}})})`);
+        await waitFor(() => overlay.webContents.executeJavaScript('Boolean(container.querySelector("img")?.naturalWidth)'));
+        assert.ok(close.isVisible());
+        console.log('Tenor GIF loaded:', await overlay.webContents.executeJavaScript('container.querySelector("img").src'));
+        await close.webContents.executeJavaScript('document.getElementById("stop").click()');
+        await waitFor(() => !close.isVisible());
+        assert.equal(await overlay.webContents.executeJavaScript('container.children.length'), 0);
+    }
     app.quit();
 })().catch(error => { console.error(error); app.exit(1); });

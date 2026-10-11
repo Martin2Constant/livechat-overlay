@@ -27,7 +27,14 @@
         return { id, start: Number.isSafeInteger(seconds) ? seconds : 0, ...(/^\/shorts\//.test(url.pathname) ? { portrait: true } : {}) };
     }
 
-    const api = { safeUrl, hostMatches, youtubeVideo };
+    function tenorPage(value) {
+        const url = safeUrl(value);
+        return Boolean(url && url.protocol === 'https:' && !url.port &&
+            ['tenor.com', 'www.tenor.com'].includes(url.hostname) &&
+            /^\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?view\/[^/]+-\d+\/?$/.test(url.pathname));
+    }
+
+    const api = { safeUrl, hostMatches, youtubeVideo, tenorPage };
     if (typeof module !== 'undefined') module.exports = api;
     else root.MediaUtils = api;
 })(globalThis);

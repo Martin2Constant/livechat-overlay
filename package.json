@@ -28,6 +28,7 @@
       "index.html",
       "renderer.js",
       "media-utils.js",
+      "tenor.js",
       "media-network.js",
       "overlay-server.js",
       "icon.png",

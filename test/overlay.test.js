@@ -124,6 +124,35 @@ test('URLs containing quotes are assigned as attributes, never HTML', async () =
     assert.equal(r.elements.get('media-container').children.length, 0);
 });
 
+test('Discord GIF attachments preserve signed URLs and stop normally', async () => {
+    const r = renderer();
+    const url = 'https://cdn.discordapp.com/attachments/123/456/animation.gif?ex=abcdef&is=123456&hm=signature';
+    await r.send({ type: 'play_media', url, author: 'Discord' });
+    const gif = r.elements.get('media-container').children[0];
+    assert.equal(gif.tagName, 'IMG');
+    assert.equal(gif.src, url);
+    r.context.hideWidget();
+    assert.equal(r.elements.get('media-container').children.length, 0);
+});
+
+test('Tenor links in command text resolve as images; obsolete resolutions cannot replace new media', async () => {
+    const r = renderer();
+    const url = 'https://tenor.com/fr/view/the-rock-stare-thinking-gif-5680807550909397990';
+    const gif = 'https://media1.tenor.com/m/TtZIXo1Pu-YAAAAC/the-rock-stare.gif';
+    r.context.window.electronAPI.resolveTenorGif = async value => { assert.equal(value, url); return gif; };
+    await r.send({ type: 'play_media', text: '!livechat ' + url });
+    assert.equal(r.elements.get('media-container').children[0].tagName, 'IMG');
+    assert.equal(r.elements.get('media-container').children[0].src, gif);
+    let finish;
+    r.context.window.electronAPI.resolveTenorGif = () => new Promise(resolve => { finish = resolve; });
+    const previous = r.send({ type: 'play_media', url });
+    await r.send({ type: 'play_media', text: 'Nouveau message' });
+    finish(gif);
+    await previous;
+    assert.equal(r.elements.get('media-container').children.length, 0);
+    assert.equal(r.elements.get('text-container').innerText, 'Nouveau message');
+});
+
 test('YouTube lifecycle: timestamp, volume, errors, cleanup and text links', async () => {
     const r = renderer();
     let options, player;

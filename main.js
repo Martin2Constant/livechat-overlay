@@ -1,4 +1,6 @@
-const { app, BrowserWindow, session, screen, globalShortcut, Tray, Menu, nativeImage, ipcMain } = require('electron');
+const { app, BrowserWindow, session, screen, globalShortcut, Tray, Menu, nativeImage, ipcMain, net } = require('electron');
+const { resolveTenorGif } = require('./tenor');
+let tenorRequest = null;
 const path = require('path');
 const fs = require('fs');
 const { startOverlayServer } = require('./overlay-server');
@@ -115,6 +117,7 @@ ipcMain.handle('open-settings', event => {
 ipcMain.on('media-active', (event, active) => {
   if (!trustedSender(event) || typeof active !== 'boolean') return;
   mediaActive = active;
+  if (!active) tenorRequest?.abort();
   mediaStateRevision++;
   updateCloseButton();
   scheduleCacheCheck();
@@ -126,6 +129,14 @@ ipcMain.handle('prepare-media', async event => {
   if (revision !== mediaStateRevision) return false;
   mediaActive = true;
   return true;
+});
+ipcMain.handle('resolve-tenor-gif', async (event, value) => {
+  if (!trustedSender(event)) throw new Error('Accès refusé');
+  tenorRequest?.abort();
+  const request = new AbortController();
+  tenorRequest = request;
+  try { return await resolveTenorGif(value, (url, options) => net.fetch(url, options), request.signal); }
+  finally { if (tenorRequest === request) tenorRequest = null; }
 });
 ipcMain.handle('cache-status', event => {
   if (!trustedSettingsSender(event)) throw new Error('Accès refusé');
@@ -173,7 +184,12 @@ ipcMain.handle('stop-media', event => {
 
 function updateCloseButton() {
   if (!closeButtonReady || !closeWindow || closeWindow.isDestroyed()) return;
-  if (mediaActive) closeWindow.showInactive();
+  if (mediaActive) {
+    positionCloseButton();
+    closeWindow.setAlwaysOnTop(true, 'screen-saver');
+    if (!closeWindow.isVisible()) closeWindow.showInactive();
+    closeWindow.moveTop();
+  }
   else closeWindow.hide();
 }
 
@@ -190,6 +206,7 @@ function positionCloseButton() {
 
 function createCloseButton() {
   closeWindow = new BrowserWindow({
+    parent: mainWindow,
     width: 32, height: 32, transparent: true, frame: false, resizable: false,
     skipTaskbar: true, alwaysOnTop: true, focusable: false, show: false,
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.js') }
@@ -481,6 +498,8 @@ function createWindow () {
   topmostInterval = setInterval(() => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      // Raise the clickable control after its transparent parent, without focus.
+      updateCloseButton();
     }
   }, 5000);
 }
@@ -552,6 +571,7 @@ else app.whenReady().then(async () => {
 }).catch(error => { console.error('[Démarrage]', error); app.quit(); });
 
 app.on('before-quit', () => {
+  tenorRequest?.abort();
   clearInterval(cacheCheckInterval);
   clearTimeout(cacheIdleTimeout);
   clearInterval(topmostInterval);
